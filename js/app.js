@@ -215,12 +215,14 @@ function renderTrip() {
   }).join('');
 
   container.querySelectorAll('.delete-event').forEach(btn => {
-    btn.addEventListener('click', async () => {
+    btn.addEventListener('click', () => {
       if (!confirm('Delete this event?')) return;
-      await api({ action: 'deleteItinerary', id: btn.dataset.id });
+      const prev = [...state.itinerary];
       state.itinerary = state.itinerary.filter(e => e.id !== btn.dataset.id);
       renderTrip();
       showToast('Event deleted');
+      api({ action: 'deleteItinerary', id: btn.dataset.id })
+        .catch(() => { state.itinerary = prev; renderTrip(); showToast('Delete failed — rolled back', 'error'); });
     });
   });
 }
@@ -292,14 +294,14 @@ function renderSubmissionPhase(view) {
 
   // Delete listing
   view.querySelectorAll('.delete-airbnb').forEach(btn => {
-    btn.addEventListener('click', async () => {
+    btn.addEventListener('click', () => {
       if (!confirm('Remove this listing?')) return;
-      try {
-        await api({ action: 'deleteAirbnb', id: btn.dataset.id });
-        state.airbnbs = state.airbnbs.filter(a => a.id !== btn.dataset.id);
-        renderBracket();
-        showToast('Listing removed');
-      } catch (e) { showToast('Error: ' + e.message, 'error'); }
+      const prev = [...state.airbnbs];
+      state.airbnbs = state.airbnbs.filter(a => a.id !== btn.dataset.id);
+      renderBracket();
+      showToast('Listing removed');
+      api({ action: 'deleteAirbnb', id: btn.dataset.id })
+        .catch(() => { state.airbnbs = prev; renderBracket(); showToast('Delete failed — rolled back', 'error'); });
     });
   });
 
@@ -399,25 +401,13 @@ function renderMatchup(m) {
 
 async function handleVote(btn) {
   if (!state.currentUser) { showToast('Select your name first!', 'error'); return; }
-  btn.disabled = true;
-  try {
-    const payload = {
-      action: 'vote',
-      matchupId: btn.dataset.matchup,
-      voter:     state.currentUser,
-      winnerId:  btn.dataset.winner,
-    };
-    await api(payload);
-    state.votes = state.votes.filter(
-      v => !(v.matchupId === payload.matchupId && v.voter === payload.voter)
-    );
-    state.votes.push(payload);
-    renderBracket();
-    showToast('Vote cast!');
-  } catch (e) {
-    showToast('Vote failed: ' + e.message, 'error');
-    btn.disabled = false;
-  }
+  const payload = { action: 'vote', matchupId: btn.dataset.matchup, voter: state.currentUser, winnerId: btn.dataset.winner };
+  const prev = [...state.votes];
+  state.votes = state.votes.filter(v => !(v.matchupId === payload.matchupId && v.voter === payload.voter));
+  state.votes.push(payload);
+  renderBracket();
+  showToast('Vote cast!');
+  api(payload).catch(e => { state.votes = prev; renderBracket(); showToast('Vote failed — rolled back', 'error'); });
 }
 
 // ─── Render: Final Poll ───────────────────────────────────────────────────────
@@ -467,18 +457,13 @@ function renderPoll(view) {
 
 async function handlePollVote(btn) {
   if (!state.currentUser) { showToast('Select your name first!', 'error'); return; }
-  btn.disabled = true;
-  try {
-    const payload = { action: 'pollVote', voter: state.currentUser, airbnbId: btn.dataset.id };
-    await api(payload);
-    state.pollVotes = state.pollVotes.filter(v => v.voter !== state.currentUser);
-    state.pollVotes.push({ voter: state.currentUser, airbnbId: payload.airbnbId });
-    renderBracket();
-    showToast('Poll vote cast!');
-  } catch (e) {
-    showToast('Vote failed: ' + e.message, 'error');
-    btn.disabled = false;
-  }
+  const payload = { action: 'pollVote', voter: state.currentUser, airbnbId: btn.dataset.id };
+  const prev = [...state.pollVotes];
+  state.pollVotes = state.pollVotes.filter(v => v.voter !== state.currentUser);
+  state.pollVotes.push({ voter: state.currentUser, airbnbId: payload.airbnbId });
+  renderBracket();
+  showToast('Vote cast!');
+  api(payload).catch(() => { state.pollVotes = prev; renderBracket(); showToast('Vote failed — rolled back', 'error'); });
 }
 
 // ─── Render: Expenses ─────────────────────────────────────────────────────────
@@ -552,12 +537,14 @@ function renderExpenseList() {
   }).join('');
 
   el.querySelectorAll('.delete-expense').forEach(btn => {
-    btn.addEventListener('click', async () => {
+    btn.addEventListener('click', () => {
       if (!confirm('Delete this expense?')) return;
-      await api({ action: 'deleteExpense', id: btn.dataset.id });
+      const prev = [...state.expenses];
       state.expenses = state.expenses.filter(e => e.id !== btn.dataset.id);
       renderExpenses();
       showToast('Expense deleted');
+      api({ action: 'deleteExpense', id: btn.dataset.id })
+        .catch(() => { state.expenses = prev; renderExpenses(); showToast('Delete failed — rolled back', 'error'); });
     });
   });
 }
@@ -634,54 +621,52 @@ function renderPolls() {
 
   // Vote toggle
   container.querySelectorAll('.poll-opt-vote').forEach(btn => {
-    btn.addEventListener('click', async () => {
+    btn.addEventListener('click', () => {
       if (!state.currentUser) return;
       const pollId   = btn.dataset.poll;
       const optionId = btn.dataset.option;
-      btn.disabled   = true;
-      try {
-        await api({ action: 'togglePollVote', pollId, optionId, voter: state.currentUser });
-        const key = v => String(v.pollId) === String(pollId) &&
-                         String(v.optionId) === String(optionId) &&
-                         v.voter === state.currentUser;
-        if (state.pollVotesCast.some(key)) {
-          state.pollVotesCast = state.pollVotesCast.filter(v => !key(v));
-        } else {
-          state.pollVotesCast.push({ pollId, optionId, voter: state.currentUser });
-        }
-        renderPolls();
-      } catch (e) { showToast('Error: ' + e.message, 'error'); btn.disabled = false; }
+      const key      = v => String(v.pollId) === String(pollId) && String(v.optionId) === String(optionId) && v.voter === state.currentUser;
+      const prev     = [...state.pollVotesCast];
+      if (state.pollVotesCast.some(key)) state.pollVotesCast = state.pollVotesCast.filter(v => !key(v));
+      else state.pollVotesCast.push({ pollId, optionId, voter: state.currentUser });
+      renderPolls();
+      api({ action: 'togglePollVote', pollId, optionId, voter: state.currentUser })
+        .catch(() => { state.pollVotesCast = prev; renderPolls(); showToast('Vote failed — rolled back', 'error'); });
     });
   });
 
   // Delete poll
   container.querySelectorAll('.delete-poll').forEach(btn => {
-    btn.addEventListener('click', async () => {
+    btn.addEventListener('click', () => {
       if (!confirm('Delete this entire poll and all its votes?')) return;
-      try {
-        await api({ action: 'deletePoll', id: btn.dataset.id });
-        const id = btn.dataset.id;
-        state.polls         = state.polls.filter(p => String(p.id) !== String(id));
-        state.pollOptions   = state.pollOptions.filter(o => String(o.pollId) !== String(id));
-        state.pollVotesCast = state.pollVotesCast.filter(v => String(v.pollId) !== String(id));
-        renderPolls();
-        showToast('Poll deleted');
-      } catch (e) { showToast('Error: ' + e.message, 'error'); }
+      const id = btn.dataset.id;
+      const prev = { polls: [...state.polls], opts: [...state.pollOptions], votes: [...state.pollVotesCast] };
+      state.polls         = state.polls.filter(p => String(p.id) !== String(id));
+      state.pollOptions   = state.pollOptions.filter(o => String(o.pollId) !== String(id));
+      state.pollVotesCast = state.pollVotesCast.filter(v => String(v.pollId) !== String(id));
+      renderPolls();
+      showToast('Poll deleted');
+      api({ action: 'deletePoll', id }).catch(() => {
+        state.polls = prev.polls; state.pollOptions = prev.opts; state.pollVotesCast = prev.votes;
+        renderPolls(); showToast('Delete failed — rolled back', 'error');
+      });
     });
   });
 
   // Delete option
   container.querySelectorAll('.delete-poll-opt').forEach(btn => {
-    btn.addEventListener('click', async () => {
+    btn.addEventListener('click', () => {
       if (!confirm('Remove this option?')) return;
-      try {
-        await api({ action: 'deletePollOption', id: btn.dataset.id });
-        const id = btn.dataset.id;
-        state.pollOptions   = state.pollOptions.filter(o => String(o.id) !== String(id));
-        state.pollVotesCast = state.pollVotesCast.filter(v => String(v.optionId) !== String(id));
-        renderPolls();
-        showToast('Option removed');
-      } catch (e) { showToast('Error: ' + e.message, 'error'); }
+      const id = btn.dataset.id;
+      const prev = { opts: [...state.pollOptions], votes: [...state.pollVotesCast] };
+      state.pollOptions   = state.pollOptions.filter(o => String(o.id) !== String(id));
+      state.pollVotesCast = state.pollVotesCast.filter(v => String(v.optionId) !== String(id));
+      renderPolls();
+      showToast('Option removed');
+      api({ action: 'deletePollOption', id }).catch(() => {
+        state.pollOptions = prev.opts; state.pollVotesCast = prev.votes;
+        renderPolls(); showToast('Delete failed — rolled back', 'error');
+      });
     });
   });
 
@@ -756,21 +741,16 @@ document.addEventListener('DOMContentLoaded', () => {
   addEventModal.querySelector('.modal-backdrop').addEventListener('click', () => {
     addEventModal.classList.add('hidden'); addEventForm.reset();
   });
-  addEventForm.addEventListener('submit', async e => {
+  addEventForm.addEventListener('submit', e => {
     e.preventDefault();
     const fd = new FormData(addEventForm);
-    const payload = {
-      action: 'addItinerary', date: fd.get('date'), time: fd.get('time') || '',
-      title: fd.get('title'), description: fd.get('description') || '',
-      addedBy: state.currentUser,
-    };
-    try {
-      await api(payload);
-      state.itinerary.push({ ...payload, id: Date.now().toString() });
-      renderTrip();
-      addEventModal.classList.add('hidden'); addEventForm.reset();
-      showToast('Event added!');
-    } catch (err) { showToast('Error: ' + err.message, 'error'); }
+    const payload = { action: 'addItinerary', date: fd.get('date'), time: fd.get('time') || '', title: fd.get('title'), description: fd.get('description') || '', addedBy: state.currentUser };
+    const item = { ...payload, id: Date.now().toString() };
+    state.itinerary.push(item);
+    renderTrip();
+    addEventModal.classList.add('hidden'); addEventForm.reset();
+    showToast('Event added!');
+    api(payload).catch(() => { state.itinerary = state.itinerary.filter(e => e.id !== item.id); renderTrip(); showToast('Save failed — rolled back', 'error'); });
   });
 
   // ── Create Poll modal ────────────────────────────────────────────────────
@@ -787,17 +767,17 @@ document.addEventListener('DOMContentLoaded', () => {
   createPollModal.querySelector('.modal-backdrop').addEventListener('click', () => {
     createPollModal.classList.add('hidden'); createPollForm.reset();
   });
-  createPollForm.addEventListener('submit', async e => {
+  createPollForm.addEventListener('submit', e => {
     e.preventDefault();
     const question = new FormData(createPollForm).get('question').trim();
     if (!question) return;
-    try {
-      await api({ action: 'createPoll', question, createdBy: state.currentUser });
-      state.polls.push({ id: Date.now().toString(), question, createdBy: state.currentUser });
-      renderPolls();
-      createPollModal.classList.add('hidden'); createPollForm.reset();
-      showToast('Poll created!');
-    } catch (err) { showToast('Error: ' + err.message, 'error'); }
+    const poll = { id: Date.now().toString(), question, createdBy: state.currentUser };
+    state.polls.push(poll);
+    renderPolls();
+    createPollModal.classList.add('hidden'); createPollForm.reset();
+    showToast('Poll created!');
+    api({ action: 'createPoll', question, createdBy: state.currentUser })
+      .catch(() => { state.polls = state.polls.filter(p => p.id !== poll.id); renderPolls(); showToast('Save failed — rolled back', 'error'); });
   });
 
   // ── Add Poll Option modal ─────────────────────────────────────────────────
@@ -810,20 +790,20 @@ document.addEventListener('DOMContentLoaded', () => {
   addOptionModal.querySelector('.modal-backdrop').addEventListener('click', () => {
     addOptionModal.classList.add('hidden'); addOptionForm.reset();
   });
-  addOptionForm.addEventListener('submit', async e => {
+  addOptionForm.addEventListener('submit', e => {
     e.preventDefault();
     const fd     = new FormData(addOptionForm);
     const pollId = fd.get('pollId');
     const title  = fd.get('title').trim();
     const url    = fd.get('url').trim();
     if (!title) return;
-    try {
-      await api({ action: 'addPollOption', pollId, title, url, addedBy: state.currentUser });
-      state.pollOptions.push({ id: Date.now().toString(), pollId, title, url, addedBy: state.currentUser });
-      renderPolls();
-      addOptionModal.classList.add('hidden'); addOptionForm.reset();
-      showToast('Option added!');
-    } catch (err) { showToast('Error: ' + err.message, 'error'); }
+    const opt = { id: Date.now().toString(), pollId, title, url, addedBy: state.currentUser };
+    state.pollOptions.push(opt);
+    renderPolls();
+    addOptionModal.classList.add('hidden'); addOptionForm.reset();
+    showToast('Option added!');
+    api({ action: 'addPollOption', pollId, title, url, addedBy: state.currentUser })
+      .catch(() => { state.pollOptions = state.pollOptions.filter(o => o.id !== opt.id); renderPolls(); showToast('Save failed — rolled back', 'error'); });
   });
 
   // ── Add AirBnb modal ─────────────────────────────────────────────────────
@@ -843,24 +823,19 @@ document.addEventListener('DOMContentLoaded', () => {
   addAirbnbModal.querySelector('.modal-backdrop').addEventListener('click', () => {
     addAirbnbModal.classList.add('hidden'); addAirbnbForm.reset();
   });
-  addAirbnbForm.addEventListener('submit', async e => {
+  addAirbnbForm.addEventListener('submit', e => {
     e.preventDefault();
-    const fd = new FormData(addAirbnbForm);
-    const payload = {
-      action: 'addAirbnb',
-      url:    fd.get('url').trim(),
-      name:   fd.get('name').trim(),
-      submittedBy: state.currentUser,
-    };
-    if (!payload.url) { showToast('URL is required', 'error'); return; }
-    try {
-      await api(payload);
-      const id = Date.now().toString();
-      state.airbnbs.push({ id, ...payload });
-      renderBracket();
-      addAirbnbModal.classList.add('hidden'); addAirbnbForm.reset();
-      showToast('Listing submitted!');
-    } catch (err) { showToast('Error: ' + err.message, 'error'); }
+    const fd  = new FormData(addAirbnbForm);
+    const url = fd.get('url').trim();
+    const name = fd.get('name').trim();
+    if (!url) { showToast('URL is required', 'error'); return; }
+    const listing = { id: Date.now().toString(), action: 'addAirbnb', url, name, submittedBy: state.currentUser };
+    state.airbnbs.push(listing);
+    renderBracket();
+    addAirbnbModal.classList.add('hidden'); addAirbnbForm.reset();
+    showToast('Listing submitted!');
+    api({ action: 'addAirbnb', url, name, submittedBy: state.currentUser })
+      .catch(() => { state.airbnbs = state.airbnbs.filter(a => a.id !== listing.id); renderBracket(); showToast('Save failed — rolled back', 'error'); });
   });
 
   // ── Add Expense modal ────────────────────────────────────────────────────
@@ -898,23 +873,18 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('selectNoneBtn').addEventListener('click', () => {
     splitAmongGrp.querySelectorAll('input').forEach(cb => cb.checked = false);
   });
-  addExpenseForm.addEventListener('submit', async e => {
+  addExpenseForm.addEventListener('submit', e => {
     e.preventDefault();
     const fd         = new FormData(addExpenseForm);
     const splitAmong = [...addExpenseForm.querySelectorAll('[name="splitAmong"]:checked')].map(cb => cb.value);
     if (!splitAmong.length) { showToast('Select at least one person to split with', 'error'); return; }
-    const payload = {
-      action: 'addExpense', description: fd.get('description'),
-      amount: Number(fd.get('amount')), paidBy: fd.get('paidBy'),
-      splitAmong, date: fd.get('date'), addedBy: state.currentUser,
-    };
-    try {
-      await api(payload);
-      state.expenses.push({ ...payload, id: Date.now().toString(), splitAmong: splitAmong.join(',') });
-      renderExpenses();
-      addExpenseModal.classList.add('hidden'); addExpenseForm.reset();
-      showToast('Expense added!');
-    } catch (err) { showToast('Error: ' + err.message, 'error'); }
+    const payload = { action: 'addExpense', description: fd.get('description'), amount: Number(fd.get('amount')), paidBy: fd.get('paidBy'), splitAmong, date: fd.get('date'), addedBy: state.currentUser };
+    const expense = { ...payload, id: Date.now().toString(), splitAmong: splitAmong.join(',') };
+    state.expenses.push(expense);
+    renderExpenses();
+    addExpenseModal.classList.add('hidden'); addExpenseForm.reset();
+    showToast('Expense added!');
+    api(payload).catch(() => { state.expenses = state.expenses.filter(ex => ex.id !== expense.id); renderExpenses(); showToast('Save failed — rolled back', 'error'); });
   });
 
   loadData();
