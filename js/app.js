@@ -17,7 +17,28 @@ let state = {
   pollVotesCast:  [],   // pick-multiple votes for polls
 };
 
-// ─── API ──────────────────────────────────────────────────────────────────────
+// ─── API (JSONP — bypasses CORS entirely) ────────────────────────────────────
+
+function jsonp(url) {
+  return new Promise((resolve, reject) => {
+    const cb     = '_cb_' + Date.now() + '_' + Math.floor(Math.random() * 1e6);
+    const script = document.createElement('script');
+    const sep    = url.includes('?') ? '&' : '?';
+    script.src   = url + sep + 'callback=' + cb;
+    window[cb]   = data => {
+      delete window[cb];
+      script.remove();
+      if (data.error) reject(new Error(data.error));
+      else resolve(data);
+    };
+    script.onerror = () => {
+      delete window[cb];
+      script.remove();
+      reject(new Error('Request failed — check your SCRIPT_URL'));
+    };
+    document.head.appendChild(script);
+  });
+}
 
 async function api(payload) {
   if (!CONFIG.SCRIPT_URL) {
@@ -25,17 +46,13 @@ async function api(payload) {
     throw new Error('SCRIPT_URL not configured');
   }
   const url = CONFIG.SCRIPT_URL + '?payload=' + encodeURIComponent(JSON.stringify(payload));
-  const res = await fetch(url);
-  const json = await res.json();
-  if (json.error) throw new Error(json.error);
-  return json;
+  return jsonp(url);
 }
 
 async function loadData() {
   if (!CONFIG.SCRIPT_URL) return;
   try {
-    const res  = await fetch(CONFIG.SCRIPT_URL);
-    const json = await res.json();
+    const json = await jsonp(CONFIG.SCRIPT_URL);
     state.votes          = json.votes          || [];
     state.pollVotes      = json.pollVotes      || [];
     state.expenses       = json.expenses       || [];

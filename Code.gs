@@ -9,10 +9,6 @@
  *    • Execute as: Me
  *    • Who has access: Anyone
  * 5. Copy the web-app URL into js/config.js → SCRIPT_URL
- *
- * If you already deployed a previous version, run initSheets() again
- * to create the new AirBnbs and Config sheets, then re-deploy as a
- * NEW deployment (not "manage existing") to pick up the code changes.
  */
 
 // ─── Sheet helpers ────────────────────────────────────────────────────────────
@@ -32,10 +28,10 @@ function sheetToObjects(sheet) {
 function initSheets() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const defs = {
-    Votes:     ['matchupId', 'voter', 'winnerId', 'timestamp'],
-    Poll:      ['voter', 'airbnbId', 'timestamp'],
-    Expenses:  ['id', 'description', 'amount', 'paidBy', 'splitAmong', 'date', 'addedBy'],
-    Itinerary: ['id', 'date', 'time', 'title', 'description', 'addedBy', 'timestamp'],
+    Votes:       ['matchupId', 'voter', 'winnerId', 'timestamp'],
+    Poll:        ['voter', 'airbnbId', 'timestamp'],
+    Expenses:    ['id', 'description', 'amount', 'paidBy', 'splitAmong', 'date', 'addedBy'],
+    Itinerary:   ['id', 'date', 'time', 'title', 'description', 'addedBy', 'timestamp'],
     AirBnbs:     ['id', 'name', 'url', 'submittedBy', 'timestamp'],
     Config:      ['key', 'value'],
     Polls:       ['id', 'question', 'createdBy', 'timestamp'],
@@ -47,7 +43,6 @@ function initSheets() {
     if (!sheet) sheet = ss.insertSheet(name);
     if (sheet.getLastRow() === 0) sheet.appendRow(headers);
   }
-  // Seed bracketStarted = false if not already set
   if (!getConfig('bracketStarted')) setConfig('bracketStarted', 'false');
   Logger.log('Sheets initialised ✓');
 }
@@ -67,77 +62,82 @@ function getConfig(key) {
 function setConfig(key, value) {
   const sheet = getSheet('Config');
   if (!sheet) return;
-  const data = sheet.getLastRow() > 1 ? sheet.getDataRange().getValues() : [['key','value']];
+  const data = sheet.getLastRow() > 1 ? sheet.getDataRange().getValues() : [['key', 'value']];
   for (let i = 1; i < data.length; i++) {
-    if (data[i][0] === key) {
-      sheet.getRange(i + 1, 2).setValue(value);
-      return;
-    }
+    if (data[i][0] === key) { sheet.getRange(i + 1, 2).setValue(value); return; }
   }
   sheet.appendRow([key, value]);
+}
+
+// ─── Response helper (supports JSONP to bypass CORS) ─────────────────────────
+
+// JSONP: when the frontend passes ?callback=_cb_123, the response is
+// _cb_123({...}) instead of raw JSON, loaded via a <script> tag.
+// This completely sidesteps browser CORS restrictions.
+function respond(obj, callback) {
+  const json = JSON.stringify(obj);
+  if (callback) {
+    return ContentService
+      .createTextOutput(callback + '(' + json + ')')
+      .setMimeType(ContentService.MimeType.JAVASCRIPT);
+  }
+  return ContentService
+    .createTextOutput(json)
+    .setMimeType(ContentService.MimeType.JSON);
 }
 
 // ─── Request routing ──────────────────────────────────────────────────────────
 
 function doGet(e) {
-  // Write operations arrive as ?payload=... to avoid CORS preflight
+  const cb = e.parameter.callback || null;
+
   if (e.parameter.payload) {
-    return handleWrite(JSON.parse(e.parameter.payload));
+    try {
+      return respond(handleWrite(JSON.parse(e.parameter.payload)), cb);
+    } catch (err) {
+      return respond({ error: err.message }, cb);
+    }
   }
-  return jsonOut({
-    votes:          sheetToObjects(getSheet('Votes')),
-    pollVotes:      sheetToObjects(getSheet('Poll')),
-    expenses:       sheetToObjects(getSheet('Expenses')),
-    itinerary:      sheetToObjects(getSheet('Itinerary')),
-    airbnbs:        sheetToObjects(getSheet('AirBnbs')),
-    bracketStarted: getConfig('bracketStarted') === 'true',
-    polls:          sheetToObjects(getSheet('Polls')),
-    pollOptions:    sheetToObjects(getSheet('PollOptions')),
-    pollVotesCast:  sheetToObjects(getSheet('PollVotes')),
-  });
+
+  try {
+    return respond({
+      votes:          sheetToObjects(getSheet('Votes')),
+      pollVotes:      sheetToObjects(getSheet('Poll')),
+      expenses:       sheetToObjects(getSheet('Expenses')),
+      itinerary:      sheetToObjects(getSheet('Itinerary')),
+      airbnbs:        sheetToObjects(getSheet('AirBnbs')),
+      bracketStarted: getConfig('bracketStarted') === 'true',
+      polls:          sheetToObjects(getSheet('Polls')),
+      pollOptions:    sheetToObjects(getSheet('PollOptions')),
+      pollVotesCast:  sheetToObjects(getSheet('PollVotes')),
+    }, cb);
+  } catch (err) {
+    return respond({ error: err.message }, cb);
+  }
 }
 
-function doPost(e) {
-  try {
-    const data = JSON.parse(
-      e.parameter.payload || (e.postData && e.postData.contents) || '{}'
-    );
-    return handleWrite(data);
-  } catch (err) {
-    return jsonOut({ error: err.message });
-  }
-}
+// ─── Write dispatcher ─────────────────────────────────────────────────────────
 
 function handleWrite(data) {
-  try {
-    switch (data.action) {
-      case 'vote':            castVote(data);                        break;
-      case 'pollVote':        castPollVote(data);                    break;
-      case 'addExpense':      addExpense(data);                      break;
-      case 'deleteExpense':   deleteById('Expenses', data.id);       break;
-      case 'addItinerary':    addItinerary(data);                    break;
-      case 'deleteItinerary': deleteById('Itinerary', data.id);      break;
-      case 'addAirbnb':       addAirbnb(data);                       break;
-      case 'deleteAirbnb':    deleteById('AirBnbs', data.id);        break;
-      case 'startBracket':    setConfig('bracketStarted', 'true');   break;
-      case 'resetBracket':      resetBracket();                          break;
-      case 'createPoll':        createPoll(data);                        break;
-      case 'deletePoll':        deletePoll(data.id);                     break;
-      case 'addPollOption':     addPollOption(data);                     break;
-      case 'deletePollOption':  deletePollOption(data.id);               break;
-      case 'togglePollVote':    togglePollVote(data);                    break;
-      default: return jsonOut({ error: 'Unknown action: ' + data.action });
-    }
-    return jsonOut({ success: true });
-  } catch (err) {
-    return jsonOut({ error: err.message });
+  switch (data.action) {
+    case 'vote':             castVote(data);                       break;
+    case 'pollVote':         castPollVote(data);                   break;
+    case 'addExpense':       addExpense(data);                     break;
+    case 'deleteExpense':    deleteById('Expenses', data.id);      break;
+    case 'addItinerary':     addItinerary(data);                   break;
+    case 'deleteItinerary':  deleteById('Itinerary', data.id);     break;
+    case 'addAirbnb':        addAirbnb(data);                      break;
+    case 'deleteAirbnb':     deleteById('AirBnbs', data.id);       break;
+    case 'startBracket':     setConfig('bracketStarted', 'true');  break;
+    case 'resetBracket':     resetBracket();                       break;
+    case 'createPoll':       createPoll(data);                     break;
+    case 'deletePoll':       deletePoll(data.id);                  break;
+    case 'addPollOption':    addPollOption(data);                   break;
+    case 'deletePollOption': deletePollOption(data.id);            break;
+    case 'togglePollVote':   togglePollVote(data);                 break;
+    default: return { error: 'Unknown action: ' + data.action };
   }
-}
-
-function jsonOut(obj) {
-  return ContentService
-    .createTextOutput(JSON.stringify(obj))
-    .setMimeType(ContentService.MimeType.JSON);
+  return { success: true };
 }
 
 // ─── Write handlers ───────────────────────────────────────────────────────────
@@ -156,40 +156,27 @@ function castPollVote(data) {
 
 function addExpense(data) {
   getSheet('Expenses').appendRow([
-    Date.now().toString(),
-    data.description,
-    Number(data.amount),
-    data.paidBy,
+    Date.now().toString(), data.description, Number(data.amount), data.paidBy,
     Array.isArray(data.splitAmong) ? data.splitAmong.join(',') : data.splitAmong,
-    data.date || new Date().toLocaleDateString('en-US'),
-    data.addedBy || '',
+    data.date || new Date().toLocaleDateString('en-US'), data.addedBy || '',
   ]);
 }
 
 function addItinerary(data) {
   getSheet('Itinerary').appendRow([
-    Date.now().toString(),
-    data.date,
-    data.time || '',
-    data.title,
-    data.description || '',
-    data.addedBy || '',
-    new Date().toISOString(),
+    Date.now().toString(), data.date, data.time || '', data.title,
+    data.description || '', data.addedBy || '', new Date().toISOString(),
   ]);
 }
 
 function addAirbnb(data) {
   getSheet('AirBnbs').appendRow([
-    Date.now().toString(),
-    data.name || '',
-    data.url,
-    data.submittedBy || '',
-    new Date().toISOString(),
+    Date.now().toString(), data.name || '', data.url,
+    data.submittedBy || '', new Date().toISOString(),
   ]);
 }
 
 function resetBracket() {
-  // Clears votes, poll votes, and unlocks submissions — does NOT delete airbnbs
   const votesSheet = getSheet('Votes');
   const pollSheet  = getSheet('Poll');
   if (votesSheet.getLastRow() > 1) votesSheet.deleteRows(2, votesSheet.getLastRow() - 1);
@@ -199,30 +186,20 @@ function resetBracket() {
 
 function createPoll(data) {
   getSheet('Polls').appendRow([
-    Date.now().toString(),
-    data.question,
-    data.createdBy || '',
-    new Date().toISOString(),
+    Date.now().toString(), data.question, data.createdBy || '', new Date().toISOString(),
   ]);
 }
 
 function deletePoll(id) {
-  // Delete poll, all its options, and all votes for it
   deleteById('Polls', id);
-  const optSheet   = getSheet('PollOptions');
-  const voteSheet  = getSheet('PollVotes');
-  removeAllRowsWhere(optSheet,  row => String(row[1]) === String(id));
-  removeAllRowsWhere(voteSheet, row => String(row[0]) === String(id));
+  removeAllRowsWhere(getSheet('PollOptions'), row => String(row[1]) === String(id));
+  removeAllRowsWhere(getSheet('PollVotes'),   row => String(row[0]) === String(id));
 }
 
 function addPollOption(data) {
   getSheet('PollOptions').appendRow([
-    Date.now().toString(),
-    data.pollId,
-    data.title,
-    data.url || '',
-    data.addedBy || '',
-    new Date().toISOString(),
+    Date.now().toString(), data.pollId, data.title,
+    data.url || '', data.addedBy || '', new Date().toISOString(),
   ]);
 }
 
@@ -234,28 +211,25 @@ function deletePollOption(optionId) {
 function togglePollVote(data) {
   const sheet = getSheet('PollVotes');
   const rows  = sheet.getLastRow() > 1 ? sheet.getDataRange().getValues() : [[]];
-  // Check if vote already exists
   for (let i = rows.length - 1; i >= 1; i--) {
     if (String(rows[i][0]) === String(data.pollId) &&
         String(rows[i][1]) === String(data.optionId) &&
         rows[i][2] === data.voter) {
-      sheet.deleteRow(i + 1); // un-vote
+      sheet.deleteRow(i + 1);
       return;
     }
   }
-  // Add vote
   sheet.appendRow([data.pollId, data.optionId, data.voter, new Date().toISOString()]);
 }
 
 function deleteById(sheetName, id) {
-  const sheet = getSheet(sheetName);
-  removeRowWhere(sheet, row => String(row[0]) === String(id));
+  removeRowWhere(getSheet(sheetName), row => String(row[0]) === String(id));
 }
 
 // ─── Utility ──────────────────────────────────────────────────────────────────
 
 function removeRowWhere(sheet, predicate) {
-  if (sheet.getLastRow() <= 1) return;
+  if (!sheet || sheet.getLastRow() <= 1) return;
   const data = sheet.getDataRange().getValues();
   for (let i = data.length - 1; i >= 1; i--) {
     if (predicate(data[i])) { sheet.deleteRow(i + 1); return; }
