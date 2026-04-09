@@ -5,12 +5,13 @@
 // ─── State ────────────────────────────────────────────────────────────────────
 
 let state = {
-  currentUser: localStorage.getItem('currentUser') || '',
-  votes:       [],
-  pollVotes:   [],
-  expenses:    [],
-  itinerary:   [],
-  loading:     false,
+  currentUser:    localStorage.getItem('currentUser') || '',
+  votes:          [],
+  pollVotes:      [],
+  expenses:       [],
+  itinerary:      [],
+  airbnbs:        [],   // user-submitted listings
+  bracketStarted: false,
 };
 
 // ─── API ──────────────────────────────────────────────────────────────────────
@@ -30,13 +31,14 @@ async function api(payload) {
 async function loadData() {
   if (!CONFIG.SCRIPT_URL) return;
   try {
-    const url = CONFIG.SCRIPT_URL;
-    const res = await fetch(url);
+    const res  = await fetch(CONFIG.SCRIPT_URL);
     const json = await res.json();
-    state.votes     = json.votes     || [];
-    state.pollVotes = json.pollVotes || [];
-    state.expenses  = json.expenses  || [];
-    state.itinerary = json.itinerary || [];
+    state.votes          = json.votes          || [];
+    state.pollVotes      = json.pollVotes      || [];
+    state.expenses       = json.expenses       || [];
+    state.itinerary      = json.itinerary      || [];
+    state.airbnbs        = json.airbnbs        || [];
+    state.bracketStarted = json.bracketStarted || false;
     renderAll();
   } catch (e) {
     console.error('Load failed:', e);
@@ -44,14 +46,30 @@ async function loadData() {
   }
 }
 
-// ─── Bracket logic ────────────────────────────────────────────────────────────
+// ─── Bracket helpers ──────────────────────────────────────────────────────────
+
+// Returns the slice of airbnbs used in the bracket (nearest power of 2 ≤ count)
+function getBracketAirbnbs() {
+  const count = state.airbnbs.length;
+  if (count < 2) return [];
+  const size = Math.pow(2, Math.floor(Math.log2(count)));
+  return state.airbnbs.slice(0, size);
+}
+
+// Next power of 2 above current count (for the "X more for Y-team" hint)
+function nextBracketSize() {
+  const count = state.airbnbs.length;
+  for (const s of [4, 8, 16]) { if (s > count) return s; }
+  return null;
+}
 
 function getVotesFor(matchupId) {
   return state.votes.filter(v => v.matchupId === matchupId);
 }
 
 function getMatchupResult(matchupId, aId, bId) {
-  const votes = getVotesFor(matchupId);
+  if (!aId || !bId) return { aVotes: 0, bVotes: 0, winner: null };
+  const votes  = getVotesFor(matchupId);
   const aVotes = votes.filter(v => String(v.winnerId) === String(aId)).length;
   const bVotes = votes.filter(v => String(v.winnerId) === String(bId)).length;
   const winner =
@@ -63,80 +81,73 @@ function getMatchupResult(matchupId, aId, bId) {
   return { aVotes, bVotes, winner };
 }
 
-// Returns array of {matchupId, a, b} for each round
+// Builds all knockout rounds from current airbnbs + votes.
+// Returns array of rounds; each round is array of {matchupId, a, b}.
 function buildBracket() {
-  const rounds = [];
+  const airbnbs      = getBracketAirbnbs();
+  if (airbnbs.length < 2) return [];
+  const totalRounds  = Math.log2(airbnbs.length) - 1; // knockout rounds (last 2 go to poll)
+  const rounds       = [];
+
   // Round 1 — fixed seeding
-  const r1 = CONFIG.BRACKET_R1.map(([ai, bi], idx) => ({
-    matchupId: `R1M${idx + 1}`,
-    a: CONFIG.AIRBNBS[ai],
-    b: CONFIG.AIRBNBS[bi],
-  }));
+  const r1 = [];
+  for (let i = 0; i < airbnbs.length; i += 2) {
+    r1.push({ matchupId: `R1M${r1.length + 1}`, a: airbnbs[i], b: airbnbs[i + 1] });
+  }
   rounds.push(r1);
 
-  // Rounds 2 & 3 — winners of previous round
-  for (let r = 2; r <= 3; r++) {
+  // Subsequent knockout rounds
+  for (let r = 2; r <= totalRounds; r++) {
     const prev = rounds[r - 2];
     const next = [];
     for (let i = 0; i < prev.length; i += 2) {
-      const mA = prev[i];
-      const mB = prev[i + 1];
-      const resA = getMatchupResult(mA.matchupId, mA.a.id, mA.b.id);
-      const resB = getMatchupResult(mB.matchupId, mB.a.id, mB.b.id);
-      const winnerA = resA.winner ? CONFIG.AIRBNBS.find(x => x.id === resA.winner) : null;
-      const winnerB = resB.winner ? CONFIG.AIRBNBS.find(x => x.id === resB.winner) : null;
-      next.push({
-        matchupId: `R${r}M${next.length + 1}`,
-        a: winnerA,
-        b: winnerB,
-      });
+      const mA   = prev[i];
+      const mB   = prev[i + 1];
+      const resA = getMatchupResult(mA.matchupId, mA.a?.id, mA.b?.id);
+      const resB = getMatchupResult(mB.matchupId, mB.a?.id, mB.b?.id);
+      const wA   = resA.winner ? state.airbnbs.find(x => String(x.id) === String(resA.winner)) : null;
+      const wB   = resB.winner ? state.airbnbs.find(x => String(x.id) === String(resB.winner)) : null;
+      next.push({ matchupId: `R${r}M${next.length + 1}`, a: wA, b: wB });
     }
     rounds.push(next);
   }
   return rounds;
 }
 
+// The two finalists are the winners of the two matchups in the last knockout round.
 function getFinalists() {
   const rounds = buildBracket();
-  const r3 = rounds[2];
-  const results = r3.map(m => m.a && m.b
-    ? getMatchupResult(m.matchupId, m.a.id, m.b.id)
-    : null);
-  return r3.map((m, i) =>
-    results[i] && results[i].winner
-      ? CONFIG.AIRBNBS.find(x => x.id === results[i].winner)
-      : null
-  );
+  if (!rounds.length) return [null, null];
+  const last = rounds[rounds.length - 1];
+  return last.map(m => {
+    if (!m.a || !m.b) return null;
+    const res = getMatchupResult(m.matchupId, m.a.id, m.b.id);
+    return res.winner ? state.airbnbs.find(x => String(x.id) === String(res.winner)) : null;
+  });
 }
 
 function bracketComplete() {
-  const finalists = getFinalists();
-  return finalists[0] !== null && finalists[1] !== null;
+  const [fA, fB] = getFinalists();
+  return fA !== null && fB !== null;
 }
 
 // ─── Expense logic ────────────────────────────────────────────────────────────
 
 function calcSettlements() {
-  const balance = {}; // positive = owed money, negative = owes money
+  const balance = {};
   CONFIG.MEMBERS.forEach(m => balance[m] = 0);
-
   state.expenses.forEach(exp => {
-    const amount = Number(exp.amount);
-    const paidBy = exp.paidBy;
+    const amount     = Number(exp.amount);
+    const paidBy     = exp.paidBy;
     const splitAmong = String(exp.splitAmong).split(',').map(s => s.trim()).filter(Boolean);
     if (!splitAmong.length) return;
     const share = amount / splitAmong.length;
     balance[paidBy] = (balance[paidBy] || 0) + amount;
-    splitAmong.forEach(person => {
-      balance[person] = (balance[person] || 0) - share;
-    });
+    splitAmong.forEach(p => balance[p] = (balance[p] || 0) - share);
   });
-
-  // Simplify debts
-  const debtors  = Object.entries(balance).filter(([, v]) => v < -0.005).map(([n, v]) => ({ name: n, amount: -v }));
+  const debtors   = Object.entries(balance).filter(([, v]) => v < -0.005).map(([n, v]) => ({ name: n, amount: -v }));
   const creditors = Object.entries(balance).filter(([, v]) => v >  0.005).map(([n, v]) => ({ name: n, amount: v }));
   const settlements = [];
-
   let d = 0, c = 0;
   while (d < debtors.length && c < creditors.length) {
     const pay = Math.min(debtors[d].amount, creditors[c].amount);
@@ -153,23 +164,6 @@ function calcSettlements() {
 
 function fmt$(n) { return '$' + Number(n).toFixed(2); }
 
-function airbnbCard(ab, compact = false) {
-  const hasLink = ab && ab.url;
-  const img = ab && ab.image
-    ? `<img src="${ab.image}" alt="${ab.name}" class="ab-img">`
-    : `<div class="ab-img ab-img-placeholder">#${ab ? ab.id : '?'}</div>`;
-  if (!ab) return `<div class="ab-card ab-card-empty">TBD</div>`;
-  return `
-    <div class="ab-card ${compact ? 'ab-card-compact' : ''}">
-      ${img}
-      <div class="ab-info">
-        <div class="ab-name">${ab.name}</div>
-        ${ab.description && !compact ? `<div class="ab-desc">${ab.description}</div>` : ''}
-        ${hasLink ? `<a href="${ab.url}" target="_blank" class="ab-link">View listing ↗</a>` : ''}
-      </div>
-    </div>`;
-}
-
 // ─── Render: Itinerary ────────────────────────────────────────────────────────
 
 function renderTrip() {
@@ -178,7 +172,6 @@ function renderTrip() {
     const items = state.itinerary
       .filter(e => e.date === date)
       .sort((a, b) => (a.time || '').localeCompare(b.time || ''));
-
     const itemsHtml = items.length
       ? items.map(item => `
           <div class="itinerary-item">
@@ -190,8 +183,7 @@ function renderTrip() {
             </div>
             ${state.currentUser ? `<button class="btn-icon delete-event" data-id="${item.id}" title="Delete">✕</button>` : ''}
           </div>`).join('')
-      : `<p class="empty-note">No events yet. Add one above!</p>`;
-
+      : `<p class="empty-note">No events yet. Add one!</p>`;
     return `
       <div class="day-card">
         <h3 class="day-label">${label}</h3>
@@ -199,7 +191,6 @@ function renderTrip() {
       </div>`;
   }).join('');
 
-  // Delete handlers
   container.querySelectorAll('.delete-event').forEach(btn => {
     btn.addEventListener('click', async () => {
       if (!confirm('Delete this event?')) return;
@@ -211,27 +202,122 @@ function renderTrip() {
   });
 }
 
-// ─── Render: Bracket ─────────────────────────────────────────────────────────
+// ─── Render: Bracket (dispatcher) ────────────────────────────────────────────
 
 function renderBracket() {
   const view = document.getElementById('bracket-view');
-
-  if (bracketComplete()) {
+  if (!state.bracketStarted) {
+    renderSubmissionPhase(view);
+  } else if (bracketComplete()) {
     renderPoll(view);
-    return;
+  } else {
+    renderKnockoutBracket(view);
+  }
+}
+
+// ─── Render: Submission phase ─────────────────────────────────────────────────
+
+function renderSubmissionPhase(view) {
+  const count       = state.airbnbs.length;
+  const bracketSize = count >= 2 ? Math.pow(2, Math.floor(Math.log2(count))) : 0;
+  const next        = nextBracketSize();
+  const canStart    = bracketSize >= 2;
+
+  const hintParts = [];
+  if (canStart)  hintParts.push(`Ready for a <strong>${bracketSize}-listing bracket</strong>`);
+  if (next)      hintParts.push(`add ${next - count} more for ${next}`);
+  const hint = hintParts.join(' · ');
+
+  const listingsHtml = state.airbnbs.length
+    ? state.airbnbs.map((ab, i) => `
+        <div class="submission-item ${i >= bracketSize ? 'submission-overflow' : ''}">
+          <div class="submission-num">${i + 1}</div>
+          <div class="submission-body">
+            <div class="submission-name">${ab.name || 'Listing #' + (i + 1)}</div>
+            <a href="${ab.url}" target="_blank" class="submission-url">${ab.url}</a>
+            <div class="submission-meta">Added by ${ab.submittedBy || 'unknown'}</div>
+          </div>
+          ${state.currentUser ? `<button class="btn-icon delete-airbnb" data-id="${ab.id}" title="Remove">✕</button>` : ''}
+          ${i >= bracketSize && bracketSize > 0 ? `<span class="overflow-tag">won't be seeded</span>` : ''}
+        </div>`).join('')
+    : `<p class="empty-note">No listings yet — be the first to submit one!</p>`;
+
+  view.innerHTML = `
+    <div class="submission-phase">
+      <div class="submission-header">
+        <div>
+          <h2>AirBnb Listings</h2>
+          <p class="submission-hint">${count} submitted${hint ? ' · ' + hint : ''}</p>
+        </div>
+        ${state.currentUser
+          ? `<button class="btn btn-primary" id="submitAirbnbBtn">+ Submit Listing</button>`
+          : `<p class="no-user-note">Select your name to submit</p>`}
+      </div>
+
+      <div class="submission-list">${listingsHtml}</div>
+
+      ${canStart && state.currentUser ? `
+        <div class="start-bracket-wrap">
+          <button class="btn btn-start" id="startBracketBtn">
+            🏆 Lock &amp; Start ${bracketSize}-Listing Bracket
+          </button>
+          ${count > bracketSize
+            ? `<p class="start-note">The first ${bracketSize} submissions will be seeded (the rest are excluded).</p>`
+            : ''}
+        </div>` : ''}
+    </div>`;
+
+  // Delete listing
+  view.querySelectorAll('.delete-airbnb').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Remove this listing?')) return;
+      try {
+        await api({ action: 'deleteAirbnb', id: btn.dataset.id });
+        state.airbnbs = state.airbnbs.filter(a => a.id !== btn.dataset.id);
+        renderBracket();
+        showToast('Listing removed');
+      } catch (e) { showToast('Error: ' + e.message, 'error'); }
+    });
+  });
+
+  // Start bracket
+  const startBtn = view.querySelector('#startBracketBtn');
+  if (startBtn) {
+    startBtn.addEventListener('click', async () => {
+      if (!confirm(`Lock submissions and start the ${bracketSize}-listing bracket? This can't be undone.`)) return;
+      startBtn.disabled = true;
+      try {
+        await api({ action: 'startBracket' });
+        state.bracketStarted = true;
+        renderBracket();
+        showToast('Bracket started! Time to vote 🏆');
+      } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+        startBtn.disabled = false;
+      }
+    });
   }
 
-  const rounds = buildBracket();
-  const roundLabels = ['Round 1', 'Round 2', 'Round 3'];
+  // Submit listing button → open modal
+  const submitBtn = view.querySelector('#submitAirbnbBtn');
+  if (submitBtn) {
+    submitBtn.addEventListener('click', () => {
+      document.getElementById('addAirbnbModal').classList.remove('hidden');
+    });
+  }
+}
 
-  const bracketHtml = rounds.map((matchups, ri) => {
-    const matchupsHtml = matchups.map(m => renderMatchup(m, ri + 1)).join('');
-    return `
-      <div class="bracket-round">
-        <div class="round-label">${roundLabels[ri]}</div>
-        <div class="matchups">${matchupsHtml}</div>
-      </div>`;
-  }).join('');
+// ─── Render: Knockout bracket ─────────────────────────────────────────────────
+
+function renderKnockoutBracket(view) {
+  const rounds      = buildBracket();
+  const roundLabels = rounds.map((_, i) => `Round ${i + 1}`);
+
+  const bracketHtml = rounds.map((matchups, ri) => `
+    <div class="bracket-round">
+      <div class="round-label">${roundLabels[ri]}</div>
+      <div class="matchups">${matchups.map(m => renderMatchup(m)).join('')}</div>
+    </div>`).join('');
 
   view.innerHTML = `
     <div class="bracket-header">
@@ -247,41 +333,36 @@ function renderBracket() {
   });
 }
 
-function renderMatchup(m, round) {
-  const prev = round > 1;
-  const locked = !m.a || !m.b; // waiting on earlier round
-
-  if (locked) {
-    return `
-      <div class="matchup matchup-locked">
-        <div class="matchup-slot slot-tbd">TBD</div>
-        <div class="matchup-vs">vs</div>
-        <div class="matchup-slot slot-tbd">TBD</div>
-      </div>`;
-  }
+function renderMatchup(m) {
+  const locked = !m.a || !m.b;
+  if (locked) return `
+    <div class="matchup matchup-locked">
+      <div class="matchup-slot slot-tbd">TBD</div>
+      <div class="matchup-vs">vs</div>
+      <div class="matchup-slot slot-tbd">TBD</div>
+    </div>`;
 
   const { aVotes, bVotes, winner } = getMatchupResult(m.matchupId, m.a.id, m.b.id);
+  const total    = aVotes + bVotes;
+  const decided  = winner !== null;
   const userVote = state.votes.find(
     v => v.matchupId === m.matchupId && v.voter === state.currentUser
   );
-  const total = aVotes + bVotes;
-  const decided = winner !== null;
 
   const slotHtml = (ab, voteCount, isWinner) => {
-    const pct = total > 0 ? Math.round((voteCount / total) * 100) : 0;
+    const pct    = total > 0 ? Math.round((voteCount / total) * 100) : 0;
     const canVote = state.currentUser && !decided;
-    const voted = userVote && String(userVote.winnerId) === String(ab.id);
+    const voted   = userVote && String(userVote.winnerId) === String(ab.id);
     return `
       <div class="matchup-slot ${isWinner ? 'slot-winner' : ''} ${decided && !isWinner ? 'slot-loser' : ''}">
-        <div class="slot-name">${ab.name}</div>
-        ${ab.url ? `<a href="${ab.url}" target="_blank" class="slot-link">↗</a>` : ''}
-        <div class="slot-bar-wrap">
-          <div class="slot-bar" style="width:${pct}%"></div>
+        <div class="slot-name">
+          ${ab.name || 'Option ' + ab.id}
+          ${ab.url ? `<a href="${ab.url}" target="_blank" class="slot-link">↗</a>` : ''}
         </div>
+        <div class="slot-bar-wrap"><div class="slot-bar" style="width:${pct}%"></div></div>
         <div class="slot-votes">${voteCount} vote${voteCount !== 1 ? 's' : ''}</div>
         ${canVote ? `<button class="vote-btn ${voted ? 'voted' : ''}"
-          data-matchup="${m.matchupId}"
-          data-winner="${ab.id}">${voted ? '✓ Voted' : 'Vote'}</button>` : ''}
+          data-matchup="${m.matchupId}" data-winner="${ab.id}">${voted ? '✓ Voted' : 'Vote'}</button>` : ''}
       </div>`;
   };
 
@@ -294,24 +375,20 @@ function renderMatchup(m, round) {
 }
 
 async function handleVote(btn) {
-  if (!state.currentUser) {
-    showToast('Select your name first!', 'error');
-    return;
-  }
+  if (!state.currentUser) { showToast('Select your name first!', 'error'); return; }
   btn.disabled = true;
   try {
     const payload = {
-      action:    'vote',
+      action: 'vote',
       matchupId: btn.dataset.matchup,
       voter:     state.currentUser,
-      winnerId:  Number(btn.dataset.winner),
+      winnerId:  btn.dataset.winner,
     };
     await api(payload);
-    // Optimistic update
     state.votes = state.votes.filter(
       v => !(v.matchupId === payload.matchupId && v.voter === payload.voter)
     );
-    state.votes.push({ matchupId: payload.matchupId, voter: payload.voter, winnerId: payload.winnerId });
+    state.votes.push(payload);
     renderBracket();
     showToast('Vote cast!');
   } catch (e) {
@@ -323,27 +400,25 @@ async function handleVote(btn) {
 // ─── Render: Final Poll ───────────────────────────────────────────────────────
 
 function renderPoll(view) {
-  const finalists = getFinalists();
-  const [fA, fB] = finalists;
-  const totalPoll = state.pollVotes.length;
-  const aVotes = state.pollVotes.filter(v => String(v.airbnbId) === String(fA?.id)).length;
-  const bVotes = state.pollVotes.filter(v => String(v.airbnbId) === String(fB?.id)).length;
-  const userPoll = state.pollVotes.find(v => v.voter === state.currentUser);
+  const [fA, fB]   = getFinalists();
+  const totalPoll  = state.pollVotes.length;
+  const aVotes     = state.pollVotes.filter(v => String(v.airbnbId) === String(fA?.id)).length;
+  const bVotes     = state.pollVotes.filter(v => String(v.airbnbId) === String(fB?.id)).length;
+  const userPoll   = state.pollVotes.find(v => v.voter === state.currentUser);
   const pollWinner = totalPoll === CONFIG.TOTAL_VOTERS
     ? (aVotes >= bVotes ? fA : fB) : null;
 
   const pollSlot = (ab, votes) => {
     if (!ab) return '';
-    const pct = totalPoll > 0 ? Math.round((votes / totalPoll) * 100) : 0;
-    const voted = userPoll && String(userPoll.airbnbId) === String(ab.id);
+    const pct     = totalPoll > 0 ? Math.round((votes / totalPoll) * 100) : 0;
+    const voted   = userPoll && String(userPoll.airbnbId) === String(ab.id);
     const canVote = state.currentUser && !pollWinner;
     return `
-      <div class="poll-option ${pollWinner && pollWinner.id === ab.id ? 'poll-winner' : ''}">
-        ${airbnbCard(ab)}
-        <div class="poll-bar-wrap">
-          <div class="poll-bar" style="width:${pct}%"></div>
-        </div>
-        <div class="poll-votes">${votes} / ${CONFIG.TOTAL_VOTERS} vote${votes !== 1 ? 's' : ''} (${pct}%)</div>
+      <div class="poll-option ${pollWinner?.id === ab.id ? 'poll-winner' : ''}">
+        <div class="poll-listing-name">${ab.name || 'Listing #' + ab.id}</div>
+        ${ab.url ? `<a href="${ab.url}" target="_blank" class="ab-link">View listing ↗</a>` : ''}
+        <div class="poll-bar-wrap"><div class="poll-bar" style="width:${pct}%"></div></div>
+        <div class="poll-votes">${votes} / ${CONFIG.TOTAL_VOTERS} votes (${pct}%)</div>
         ${canVote ? `<button class="btn btn-primary poll-vote-btn ${voted ? 'voted' : ''}"
           data-id="${ab.id}">${voted ? '✓ Your pick' : 'Choose this one'}</button>` : ''}
       </div>`;
@@ -353,14 +428,14 @@ function renderPoll(view) {
     <div class="poll-header">
       <div class="poll-trophy">🏆</div>
       <h2>Final Vote</h2>
-      <p>The bracket is decided — now pick your winner!</p>
+      <p>Two finalists remain — pick your winner!</p>
     </div>
     <div class="poll-options">
       ${pollSlot(fA, aVotes)}
       <div class="poll-vs">vs</div>
       ${pollSlot(fB, bVotes)}
     </div>
-    ${pollWinner ? `<div class="poll-result">🎉 The group chose: <strong>${pollWinner.name}</strong></div>` : ''}`;
+    ${pollWinner ? `<div class="poll-result">🎉 The group chose: <strong>${pollWinner.name || 'Listing #' + pollWinner.id}</strong></div>` : ''}`;
 
   view.querySelectorAll('.poll-vote-btn').forEach(btn => {
     btn.addEventListener('click', () => handlePollVote(btn));
@@ -371,7 +446,7 @@ async function handlePollVote(btn) {
   if (!state.currentUser) { showToast('Select your name first!', 'error'); return; }
   btn.disabled = true;
   try {
-    const payload = { action: 'pollVote', voter: state.currentUser, airbnbId: Number(btn.dataset.id) };
+    const payload = { action: 'pollVote', voter: state.currentUser, airbnbId: btn.dataset.id };
     await api(payload);
     state.pollVotes = state.pollVotes.filter(v => v.voter !== state.currentUser);
     state.pollVotes.push({ voter: state.currentUser, airbnbId: payload.airbnbId });
@@ -393,7 +468,7 @@ function renderExpenses() {
 function renderExpenseSummary() {
   const { balance, settlements } = calcSettlements();
   const total = state.expenses.reduce((s, e) => s + Number(e.amount), 0);
-  const el = document.getElementById('expensesSummary');
+  const el    = document.getElementById('expensesSummary');
 
   const settlementsHtml = settlements.length
     ? settlements.map(s => `
@@ -437,12 +512,8 @@ function renderExpenseSummary() {
 
 function renderExpenseList() {
   const el = document.getElementById('expensesList');
-  if (!state.expenses.length) {
-    el.innerHTML = '<p class="empty-note">No expenses yet.</p>';
-    return;
-  }
-  const sorted = [...state.expenses].reverse();
-  el.innerHTML = sorted.map(exp => {
+  if (!state.expenses.length) { el.innerHTML = '<p class="empty-note">No expenses yet.</p>'; return; }
+  el.innerHTML = [...state.expenses].reverse().map(exp => {
     const split = String(exp.splitAmong).split(',').map(s => s.trim()).filter(Boolean);
     return `
       <div class="expense-item">
@@ -451,9 +522,7 @@ function renderExpenseList() {
           <div class="expense-amount">${fmt$(exp.amount)}</div>
         </div>
         <div class="expense-meta">
-          Paid by <strong>${exp.paidBy}</strong> ·
-          Split: ${split.join(', ')} ·
-          ${exp.date}
+          Paid by <strong>${exp.paidBy}</strong> · Split: ${split.join(', ')} · ${exp.date}
         </div>
         ${state.currentUser ? `<button class="btn-icon delete-expense" data-id="${exp.id}" title="Delete">✕</button>` : ''}
       </div>`;
@@ -517,53 +586,80 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // ── Add Event modal ──
-  const addEventModal  = document.getElementById('addEventModal');
-  const addEventForm   = document.getElementById('addEventForm');
-  const paidBySelect   = document.getElementById('paidBySelect');
-  const splitAmongGrp  = document.getElementById('splitAmongGroup');
+  // ── Add Event modal ──────────────────────────────────────────────────────
+  const addEventModal = document.getElementById('addEventModal');
+  const addEventForm  = document.getElementById('addEventForm');
 
   document.getElementById('addEventBtn').addEventListener('click', () => {
     if (!state.currentUser) { showToast('Select your name first!', 'error'); return; }
     addEventModal.classList.remove('hidden');
   });
   document.getElementById('cancelEventBtn').addEventListener('click', () => {
-    addEventModal.classList.add('hidden');
-    addEventForm.reset();
+    addEventModal.classList.add('hidden'); addEventForm.reset();
   });
   addEventModal.querySelector('.modal-backdrop').addEventListener('click', () => {
-    addEventModal.classList.add('hidden');
-    addEventForm.reset();
+    addEventModal.classList.add('hidden'); addEventForm.reset();
   });
-
   addEventForm.addEventListener('submit', async e => {
     e.preventDefault();
     const fd = new FormData(addEventForm);
     const payload = {
-      action:      'addItinerary',
-      date:        fd.get('date'),
-      time:        fd.get('time') || '',
-      title:       fd.get('title'),
-      description: fd.get('description') || '',
-      addedBy:     state.currentUser,
+      action: 'addItinerary', date: fd.get('date'), time: fd.get('time') || '',
+      title: fd.get('title'), description: fd.get('description') || '',
+      addedBy: state.currentUser,
     };
     try {
       await api(payload);
       state.itinerary.push({ ...payload, id: Date.now().toString() });
       renderTrip();
-      addEventModal.classList.add('hidden');
-      addEventForm.reset();
+      addEventModal.classList.add('hidden'); addEventForm.reset();
       showToast('Event added!');
-    } catch (err) {
-      showToast('Error: ' + err.message, 'error');
-    }
+    } catch (err) { showToast('Error: ' + err.message, 'error'); }
   });
 
-  // ── Add Expense modal ──
+  // ── Add AirBnb modal ─────────────────────────────────────────────────────
+  const addAirbnbModal = document.getElementById('addAirbnbModal');
+  const addAirbnbForm  = document.getElementById('addAirbnbForm');
+
+  // Modal is also opened from within renderSubmissionPhase (dynamic button)
+  document.addEventListener('click', e => {
+    if (e.target.id === 'submitAirbnbBtn') {
+      if (!state.currentUser) { showToast('Select your name first!', 'error'); return; }
+      addAirbnbModal.classList.remove('hidden');
+    }
+  });
+  document.getElementById('cancelAirbnbBtn').addEventListener('click', () => {
+    addAirbnbModal.classList.add('hidden'); addAirbnbForm.reset();
+  });
+  addAirbnbModal.querySelector('.modal-backdrop').addEventListener('click', () => {
+    addAirbnbModal.classList.add('hidden'); addAirbnbForm.reset();
+  });
+  addAirbnbForm.addEventListener('submit', async e => {
+    e.preventDefault();
+    const fd = new FormData(addAirbnbForm);
+    const payload = {
+      action: 'addAirbnb',
+      url:    fd.get('url').trim(),
+      name:   fd.get('name').trim(),
+      submittedBy: state.currentUser,
+    };
+    if (!payload.url) { showToast('URL is required', 'error'); return; }
+    try {
+      await api(payload);
+      const id = Date.now().toString();
+      state.airbnbs.push({ id, ...payload });
+      renderBracket();
+      addAirbnbModal.classList.add('hidden'); addAirbnbForm.reset();
+      showToast('Listing submitted!');
+    } catch (err) { showToast('Error: ' + err.message, 'error'); }
+  });
+
+  // ── Add Expense modal ────────────────────────────────────────────────────
   const addExpenseModal = document.getElementById('addExpenseModal');
   const addExpenseForm  = document.getElementById('addExpenseForm');
+  const paidBySelect    = document.getElementById('paidBySelect');
+  const splitAmongGrp   = document.getElementById('splitAmongGroup');
 
-  // Populate paid-by & split-among
   CONFIG.MEMBERS.forEach(name => {
     const opt = document.createElement('option');
     opt.value = opt.textContent = name;
@@ -575,59 +671,42 @@ document.addEventListener('DOMContentLoaded', () => {
     splitAmongGrp.appendChild(label);
   });
 
-  // Pre-select current user as payer when modal opens
   document.getElementById('addExpenseBtn').addEventListener('click', () => {
     if (!state.currentUser) { showToast('Select your name first!', 'error'); return; }
     paidBySelect.value = state.currentUser;
-    // Default date to today
-    const today = new Date().toISOString().split('T')[0];
-    addExpenseForm.querySelector('[name="date"]').value = today;
+    addExpenseForm.querySelector('[name="date"]').value = new Date().toISOString().split('T')[0];
     addExpenseModal.classList.remove('hidden');
   });
   document.getElementById('cancelExpenseBtn').addEventListener('click', () => {
-    addExpenseModal.classList.add('hidden');
-    addExpenseForm.reset();
+    addExpenseModal.classList.add('hidden'); addExpenseForm.reset();
   });
   addExpenseModal.querySelector('.modal-backdrop').addEventListener('click', () => {
-    addExpenseModal.classList.add('hidden');
-    addExpenseForm.reset();
+    addExpenseModal.classList.add('hidden'); addExpenseForm.reset();
   });
-
   document.getElementById('selectAllBtn').addEventListener('click', () => {
     splitAmongGrp.querySelectorAll('input').forEach(cb => cb.checked = true);
   });
   document.getElementById('selectNoneBtn').addEventListener('click', () => {
     splitAmongGrp.querySelectorAll('input').forEach(cb => cb.checked = false);
   });
-
   addExpenseForm.addEventListener('submit', async e => {
     e.preventDefault();
-    const fd = new FormData(addExpenseForm);
-    const splitAmong = [...addExpenseForm.querySelectorAll('[name="splitAmong"]:checked')]
-      .map(cb => cb.value);
+    const fd         = new FormData(addExpenseForm);
+    const splitAmong = [...addExpenseForm.querySelectorAll('[name="splitAmong"]:checked')].map(cb => cb.value);
     if (!splitAmong.length) { showToast('Select at least one person to split with', 'error'); return; }
-
     const payload = {
-      action:      'addExpense',
-      description: fd.get('description'),
-      amount:      Number(fd.get('amount')),
-      paidBy:      fd.get('paidBy'),
-      splitAmong,
-      date:        fd.get('date'),
-      addedBy:     state.currentUser,
+      action: 'addExpense', description: fd.get('description'),
+      amount: Number(fd.get('amount')), paidBy: fd.get('paidBy'),
+      splitAmong, date: fd.get('date'), addedBy: state.currentUser,
     };
     try {
       await api(payload);
       state.expenses.push({ ...payload, id: Date.now().toString(), splitAmong: splitAmong.join(',') });
       renderExpenses();
-      addExpenseModal.classList.add('hidden');
-      addExpenseForm.reset();
+      addExpenseModal.classList.add('hidden'); addExpenseForm.reset();
       showToast('Expense added!');
-    } catch (err) {
-      showToast('Error: ' + err.message, 'error');
-    }
+    } catch (err) { showToast('Error: ' + err.message, 'error'); }
   });
 
-  // Load data from Google Sheets
   loadData();
 });

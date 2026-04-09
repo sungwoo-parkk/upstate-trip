@@ -63,6 +63,28 @@
 
   </main>
 
+  <!-- ─── Add AirBnb Modal ────────────────────────────────────────────────── -->
+  <div class="modal hidden" id="addAirbnbModal">
+    <div class="modal-backdrop"></div>
+    <div class="modal-box">
+      <h3>Submit an AirBnb</h3>
+      <form id="addAirbnbForm" autocomplete="off">
+        <div class="form-group">
+          <label>AirBnb URL</label>
+          <input type="url" name="url" required placeholder="https://www.airbnb.com/rooms/...">
+        </div>
+        <div class="form-group">
+          <label>Nickname <span class="optional">(optional)</span></label>
+          <input type="text" name="name" placeholder="e.g. Catskills Cabin">
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-ghost" id="cancelAirbnbBtn">Cancel</button>
+          <button type="submit" class="btn btn-primary">Submit</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- ─── Add Event Modal ──────────────────────────────────────────────────── -->
   <div class="modal hidden" id="addEventModal">
     <div class="modal-backdrop"></div>
