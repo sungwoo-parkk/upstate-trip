@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Upstate NY Trip · May 2025</title>
+  <title>Upstate NY Trip · May 2026</title>
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -15,7 +15,7 @@
         <span class="header-icon">🏔️</span>
         <div>
           <h1>Upstate NY</h1>
-          <p>May 8–10, 2025</p>
+          <p>May 8–10, 2026</p>
         </div>
       </div>
       <div class="user-picker">
@@ -31,6 +31,7 @@
   <nav class="tab-nav">
     <button class="tab-btn active" data-tab="trip">🗺️ Trip Plans</button>
     <button class="tab-btn"        data-tab="bracket">🏠 AirBnb Vote</button>
+    <button class="tab-btn"        data-tab="polls">🗳️ Polls</button>
     <button class="tab-btn"        data-tab="expenses">💰 Expenses</button>
   </nav>
 
@@ -51,6 +52,15 @@
       <div id="bracket-view"></div>
     </section>
 
+    <!-- POLLS TAB -->
+    <section id="tab-polls" class="tab-pane">
+      <div class="section-header">
+        <h2>Polls</h2>
+        <button class="btn btn-primary" id="createPollBtn">+ Create Poll</button>
+      </div>
+      <div id="polls-container"></div>
+    </section>
+
     <!-- EXPENSES TAB -->
     <section id="tab-expenses" class="tab-pane">
       <div class="section-header">
@@ -62,6 +72,47 @@
     </section>
 
   </main>
+
+  <!-- ─── Create Poll Modal ───────────────────────────────────────────────── -->
+  <div class="modal hidden" id="createPollModal">
+    <div class="modal-backdrop"></div>
+    <div class="modal-box">
+      <h3>Create Poll</h3>
+      <form id="createPollForm" autocomplete="off">
+        <div class="form-group">
+          <label>Question</label>
+          <input type="text" name="question" required placeholder="e.g. Which restaurant should we try?">
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-ghost" id="cancelPollBtn">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ─── Add Poll Option Modal ────────────────────────────────────────────── -->
+  <div class="modal hidden" id="addOptionModal">
+    <div class="modal-backdrop"></div>
+    <div class="modal-box">
+      <h3>Add Option</h3>
+      <form id="addOptionForm" autocomplete="off">
+        <input type="hidden" name="pollId">
+        <div class="form-group">
+          <label>Title</label>
+          <input type="text" name="title" required placeholder="e.g. Silvia Restaurant">
+        </div>
+        <div class="form-group">
+          <label>Link <span class="optional">(optional)</span></label>
+          <input type="url" name="url" placeholder="https://...">
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-ghost" id="cancelOptionBtn">Cancel</button>
+          <button type="submit" class="btn btn-primary">Add</button>
+        </div>
+      </form>
+    </div>
+  </div>
 
   <!-- ─── Add AirBnb Modal ────────────────────────────────────────────────── -->
   <div class="modal hidden" id="addAirbnbModal">
@@ -94,9 +145,9 @@
         <div class="form-group">
           <label>Day</label>
           <select name="date" required>
-            <option value="2025-05-08">Thursday, May 8</option>
-            <option value="2025-05-09">Friday, May 9</option>
-            <option value="2025-05-10">Saturday, May 10</option>
+            <option value="2026-05-08">Friday, May 8</option>
+            <option value="2026-05-09">Saturday, May 9</option>
+            <option value="2026-05-10">Sunday, May 10</option>
           </select>
         </div>
         <div class="form-group">

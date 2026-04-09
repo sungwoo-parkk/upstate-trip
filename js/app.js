@@ -10,8 +10,11 @@ let state = {
   pollVotes:      [],
   expenses:       [],
   itinerary:      [],
-  airbnbs:        [],   // user-submitted listings
+  airbnbs:        [],   // user-submitted AirBnb listings
   bracketStarted: false,
+  polls:          [],   // poll questions
+  pollOptions:    [],   // options per poll
+  pollVotesCast:  [],   // pick-multiple votes for polls
 };
 
 // ─── API ──────────────────────────────────────────────────────────────────────
@@ -39,6 +42,9 @@ async function loadData() {
     state.itinerary      = json.itinerary      || [];
     state.airbnbs        = json.airbnbs        || [];
     state.bracketStarted = json.bracketStarted || false;
+    state.polls          = json.polls          || [];
+    state.pollOptions    = json.pollOptions    || [];
+    state.pollVotesCast  = json.pollVotesCast  || [];
     renderAll();
   } catch (e) {
     console.error('Load failed:', e);
@@ -539,11 +545,144 @@ function renderExpenseList() {
   });
 }
 
+// ─── Render: Polls ───────────────────────────────────────────────────────────
+
+function renderPolls() {
+  const container = document.getElementById('polls-container');
+  if (!container) return;
+
+  if (!state.polls.length) {
+    container.innerHTML = '<p class="empty-note">No polls yet — create one!</p>';
+    return;
+  }
+
+  // Sort polls newest-first
+  const sorted = [...state.polls].sort((a, b) => String(b.id).localeCompare(String(a.id)));
+
+  container.innerHTML = sorted.map(poll => {
+    const options     = state.pollOptions.filter(o => String(o.pollId) === String(poll.id));
+    const totalVoters = new Set(
+      state.pollVotesCast.filter(v => String(v.pollId) === String(poll.id)).map(v => v.voter)
+    ).size;
+
+    const optionsHtml = options.length
+      ? options.map(opt => {
+          const voteCount = state.pollVotesCast.filter(
+            v => String(v.pollId) === String(poll.id) && String(v.optionId) === String(opt.id)
+          ).length;
+          const userVoted = state.pollVotesCast.some(
+            v => String(v.pollId) === String(poll.id) &&
+                 String(v.optionId) === String(opt.id) &&
+                 v.voter === state.currentUser
+          );
+          const pct = totalVoters > 0 ? Math.round((voteCount / totalVoters) * 100) : 0;
+
+          return `
+            <div class="poll-opt-row">
+              <button class="poll-opt-vote ${userVoted ? 'poll-opt-voted' : ''} ${!state.currentUser ? 'poll-opt-disabled' : ''}"
+                data-poll="${poll.id}" data-option="${opt.id}"
+                ${!state.currentUser ? 'disabled title="Select your name first"' : ''}>
+                ${userVoted ? '✓' : '○'}
+              </button>
+              <div class="poll-opt-body">
+                <div class="poll-opt-title">
+                  ${opt.title}
+                  ${opt.url ? `<a href="${opt.url}" target="_blank" class="poll-opt-link">↗</a>` : ''}
+                </div>
+                <div class="poll-opt-bar-wrap">
+                  <div class="poll-opt-bar" style="width:${pct}%"></div>
+                </div>
+              </div>
+              <div class="poll-opt-count">${voteCount}</div>
+              ${state.currentUser ? `<button class="btn-icon delete-poll-opt" data-id="${opt.id}" data-poll="${poll.id}" title="Remove option">✕</button>` : ''}
+            </div>`;
+        }).join('')
+      : `<p class="empty-note" style="margin:0 0 12px">No options yet — add one below.</p>`;
+
+    return `
+      <div class="poll-card" data-poll-id="${poll.id}">
+        <div class="poll-card-header">
+          <div>
+            <div class="poll-question">${poll.question}</div>
+            <div class="poll-meta">Created by ${poll.createdBy || 'unknown'} · ${totalVoters} voter${totalVoters !== 1 ? 's' : ''}</div>
+          </div>
+          ${state.currentUser ? `<button class="btn-icon delete-poll" data-id="${poll.id}" title="Delete poll">🗑️</button>` : ''}
+        </div>
+        <div class="poll-options-list">${optionsHtml}</div>
+        ${state.currentUser ? `
+          <button class="btn btn-sm btn-ghost add-opt-btn" data-poll="${poll.id}">+ Add Option</button>
+        ` : ''}
+      </div>`;
+  }).join('');
+
+  // Vote toggle
+  container.querySelectorAll('.poll-opt-vote').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!state.currentUser) return;
+      const pollId   = btn.dataset.poll;
+      const optionId = btn.dataset.option;
+      btn.disabled   = true;
+      try {
+        await api({ action: 'togglePollVote', pollId, optionId, voter: state.currentUser });
+        const key = v => String(v.pollId) === String(pollId) &&
+                         String(v.optionId) === String(optionId) &&
+                         v.voter === state.currentUser;
+        if (state.pollVotesCast.some(key)) {
+          state.pollVotesCast = state.pollVotesCast.filter(v => !key(v));
+        } else {
+          state.pollVotesCast.push({ pollId, optionId, voter: state.currentUser });
+        }
+        renderPolls();
+      } catch (e) { showToast('Error: ' + e.message, 'error'); btn.disabled = false; }
+    });
+  });
+
+  // Delete poll
+  container.querySelectorAll('.delete-poll').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Delete this entire poll and all its votes?')) return;
+      try {
+        await api({ action: 'deletePoll', id: btn.dataset.id });
+        const id = btn.dataset.id;
+        state.polls         = state.polls.filter(p => String(p.id) !== String(id));
+        state.pollOptions   = state.pollOptions.filter(o => String(o.pollId) !== String(id));
+        state.pollVotesCast = state.pollVotesCast.filter(v => String(v.pollId) !== String(id));
+        renderPolls();
+        showToast('Poll deleted');
+      } catch (e) { showToast('Error: ' + e.message, 'error'); }
+    });
+  });
+
+  // Delete option
+  container.querySelectorAll('.delete-poll-opt').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Remove this option?')) return;
+      try {
+        await api({ action: 'deletePollOption', id: btn.dataset.id });
+        const id = btn.dataset.id;
+        state.pollOptions   = state.pollOptions.filter(o => String(o.id) !== String(id));
+        state.pollVotesCast = state.pollVotesCast.filter(v => String(v.optionId) !== String(id));
+        renderPolls();
+        showToast('Option removed');
+      } catch (e) { showToast('Error: ' + e.message, 'error'); }
+    });
+  });
+
+  // Add option → open modal pre-filled with pollId
+  container.querySelectorAll('.add-opt-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelector('#addOptionForm [name="pollId"]').value = btn.dataset.poll;
+      document.getElementById('addOptionModal').classList.remove('hidden');
+    });
+  });
+}
+
 // ─── Render: All ─────────────────────────────────────────────────────────────
 
 function renderAll() {
   renderTrip();
   renderBracket();
+  renderPolls();
   renderExpenses();
 }
 
@@ -614,6 +753,59 @@ document.addEventListener('DOMContentLoaded', () => {
       renderTrip();
       addEventModal.classList.add('hidden'); addEventForm.reset();
       showToast('Event added!');
+    } catch (err) { showToast('Error: ' + err.message, 'error'); }
+  });
+
+  // ── Create Poll modal ────────────────────────────────────────────────────
+  const createPollModal = document.getElementById('createPollModal');
+  const createPollForm  = document.getElementById('createPollForm');
+
+  document.getElementById('createPollBtn').addEventListener('click', () => {
+    if (!state.currentUser) { showToast('Select your name first!', 'error'); return; }
+    createPollModal.classList.remove('hidden');
+  });
+  document.getElementById('cancelPollBtn').addEventListener('click', () => {
+    createPollModal.classList.add('hidden'); createPollForm.reset();
+  });
+  createPollModal.querySelector('.modal-backdrop').addEventListener('click', () => {
+    createPollModal.classList.add('hidden'); createPollForm.reset();
+  });
+  createPollForm.addEventListener('submit', async e => {
+    e.preventDefault();
+    const question = new FormData(createPollForm).get('question').trim();
+    if (!question) return;
+    try {
+      await api({ action: 'createPoll', question, createdBy: state.currentUser });
+      state.polls.push({ id: Date.now().toString(), question, createdBy: state.currentUser });
+      renderPolls();
+      createPollModal.classList.add('hidden'); createPollForm.reset();
+      showToast('Poll created!');
+    } catch (err) { showToast('Error: ' + err.message, 'error'); }
+  });
+
+  // ── Add Poll Option modal ─────────────────────────────────────────────────
+  const addOptionModal = document.getElementById('addOptionModal');
+  const addOptionForm  = document.getElementById('addOptionForm');
+
+  document.getElementById('cancelOptionBtn').addEventListener('click', () => {
+    addOptionModal.classList.add('hidden'); addOptionForm.reset();
+  });
+  addOptionModal.querySelector('.modal-backdrop').addEventListener('click', () => {
+    addOptionModal.classList.add('hidden'); addOptionForm.reset();
+  });
+  addOptionForm.addEventListener('submit', async e => {
+    e.preventDefault();
+    const fd     = new FormData(addOptionForm);
+    const pollId = fd.get('pollId');
+    const title  = fd.get('title').trim();
+    const url    = fd.get('url').trim();
+    if (!title) return;
+    try {
+      await api({ action: 'addPollOption', pollId, title, url, addedBy: state.currentUser });
+      state.pollOptions.push({ id: Date.now().toString(), pollId, title, url, addedBy: state.currentUser });
+      renderPolls();
+      addOptionModal.classList.add('hidden'); addOptionForm.reset();
+      showToast('Option added!');
     } catch (err) { showToast('Error: ' + err.message, 'error'); }
   });
 

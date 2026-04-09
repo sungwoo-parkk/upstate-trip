@@ -36,8 +36,11 @@ function initSheets() {
     Poll:      ['voter', 'airbnbId', 'timestamp'],
     Expenses:  ['id', 'description', 'amount', 'paidBy', 'splitAmong', 'date', 'addedBy'],
     Itinerary: ['id', 'date', 'time', 'title', 'description', 'addedBy', 'timestamp'],
-    AirBnbs:   ['id', 'name', 'url', 'submittedBy', 'timestamp'],
-    Config:    ['key', 'value'],
+    AirBnbs:     ['id', 'name', 'url', 'submittedBy', 'timestamp'],
+    Config:      ['key', 'value'],
+    Polls:       ['id', 'question', 'createdBy', 'timestamp'],
+    PollOptions: ['id', 'pollId', 'title', 'url', 'addedBy', 'timestamp'],
+    PollVotes:   ['pollId', 'optionId', 'voter', 'timestamp'],
   };
   for (const [name, headers] of Object.entries(defs)) {
     let sheet = ss.getSheetByName(name);
@@ -88,6 +91,9 @@ function doGet(e) {
     itinerary:      sheetToObjects(getSheet('Itinerary')),
     airbnbs:        sheetToObjects(getSheet('AirBnbs')),
     bracketStarted: getConfig('bracketStarted') === 'true',
+    polls:          sheetToObjects(getSheet('Polls')),
+    pollOptions:    sheetToObjects(getSheet('PollOptions')),
+    pollVotesCast:  sheetToObjects(getSheet('PollVotes')),
   });
 }
 
@@ -114,7 +120,12 @@ function handleWrite(data) {
       case 'addAirbnb':       addAirbnb(data);                       break;
       case 'deleteAirbnb':    deleteById('AirBnbs', data.id);        break;
       case 'startBracket':    setConfig('bracketStarted', 'true');   break;
-      case 'resetBracket':    resetBracket();                        break;
+      case 'resetBracket':      resetBracket();                          break;
+      case 'createPoll':        createPoll(data);                        break;
+      case 'deletePoll':        deletePoll(data.id);                     break;
+      case 'addPollOption':     addPollOption(data);                     break;
+      case 'deletePollOption':  deletePollOption(data.id);               break;
+      case 'togglePollVote':    togglePollVote(data);                    break;
       default: return jsonOut({ error: 'Unknown action: ' + data.action });
     }
     return jsonOut({ success: true });
@@ -186,6 +197,56 @@ function resetBracket() {
   setConfig('bracketStarted', 'false');
 }
 
+function createPoll(data) {
+  getSheet('Polls').appendRow([
+    Date.now().toString(),
+    data.question,
+    data.createdBy || '',
+    new Date().toISOString(),
+  ]);
+}
+
+function deletePoll(id) {
+  // Delete poll, all its options, and all votes for it
+  deleteById('Polls', id);
+  const optSheet   = getSheet('PollOptions');
+  const voteSheet  = getSheet('PollVotes');
+  removeAllRowsWhere(optSheet,  row => String(row[1]) === String(id));
+  removeAllRowsWhere(voteSheet, row => String(row[0]) === String(id));
+}
+
+function addPollOption(data) {
+  getSheet('PollOptions').appendRow([
+    Date.now().toString(),
+    data.pollId,
+    data.title,
+    data.url || '',
+    data.addedBy || '',
+    new Date().toISOString(),
+  ]);
+}
+
+function deletePollOption(optionId) {
+  deleteById('PollOptions', optionId);
+  removeAllRowsWhere(getSheet('PollVotes'), row => String(row[1]) === String(optionId));
+}
+
+function togglePollVote(data) {
+  const sheet = getSheet('PollVotes');
+  const rows  = sheet.getLastRow() > 1 ? sheet.getDataRange().getValues() : [[]];
+  // Check if vote already exists
+  for (let i = rows.length - 1; i >= 1; i--) {
+    if (String(rows[i][0]) === String(data.pollId) &&
+        String(rows[i][1]) === String(data.optionId) &&
+        rows[i][2] === data.voter) {
+      sheet.deleteRow(i + 1); // un-vote
+      return;
+    }
+  }
+  // Add vote
+  sheet.appendRow([data.pollId, data.optionId, data.voter, new Date().toISOString()]);
+}
+
 function deleteById(sheetName, id) {
   const sheet = getSheet(sheetName);
   removeRowWhere(sheet, row => String(row[0]) === String(id));
@@ -197,9 +258,14 @@ function removeRowWhere(sheet, predicate) {
   if (sheet.getLastRow() <= 1) return;
   const data = sheet.getDataRange().getValues();
   for (let i = data.length - 1; i >= 1; i--) {
-    if (predicate(data[i])) {
-      sheet.deleteRow(i + 1);
-      return; // remove first match only
-    }
+    if (predicate(data[i])) { sheet.deleteRow(i + 1); return; }
+  }
+}
+
+function removeAllRowsWhere(sheet, predicate) {
+  if (!sheet || sheet.getLastRow() <= 1) return;
+  const data = sheet.getDataRange().getValues();
+  for (let i = data.length - 1; i >= 1; i--) {
+    if (predicate(data[i])) sheet.deleteRow(i + 1);
   }
 }
