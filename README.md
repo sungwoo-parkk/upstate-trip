@@ -1,5 +1,3 @@
-# Upstate NY Trip — May 8–10, 2025
-
 A group trip website with:
 - **Trip itinerary** (editable by the group)
 - **AirBnb bracket vote** (16 options → knockout rounds → final poll)
