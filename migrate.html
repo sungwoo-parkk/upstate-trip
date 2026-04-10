@@ -53,7 +53,10 @@
 <!-- Firebase SDK -->
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-<script src="js/config.js"></script>
+<script>
+  const OLD_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyzRRjJrDdQM9VOl9OxiDhHx9l61FjzmedwxnWAJvUlJ97spo55GEBXo4m2RRkaAJC_/exec';
+  const CONFIG = { OLD_SCRIPT_URL };
+</script>
 <script>
 const OLD_URL = CONFIG.OLD_SCRIPT_URL;
 const logEl   = document.getElementById('log');

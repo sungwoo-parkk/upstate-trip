@@ -225,7 +225,36 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 
-  <script src="js/config.js"></script>
+  <!-- App config — Firebase web API keys are public by design; security comes from Firestore rules -->
+  <script>
+    const FIREBASE_CONFIG = {
+      apiKey:            "AIzaSyDATyM7jZeXykSS2346UDZSdcY2myqEuO4",
+      authDomain:        "trip-planner-bf8d2.firebaseapp.com",
+      projectId:         "trip-planner-bf8d2",
+      storageBucket:     "trip-planner-bf8d2.firebasestorage.app",
+      messagingSenderId: "854407879557",
+      appId:             "1:854407879557:web:7e844bbe2e266137b282ec",
+    };
+    const OLD_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyzRRjJrDdQM9VOl9OxiDhHx9l61FjzmedwxnWAJvUlJ97spo55GEBXo4m2RRkaAJC_/exec';
+    const CONFIG = {
+      FIREBASE_CONFIG,
+      OLD_SCRIPT_URL,
+      MEMBERS: ['Paul', 'Haley', 'Jason', 'Rebecca', 'Sojung', 'Eonbi', 'Ryan'],
+      TOTAL_VOTERS:   7,
+      MAJORITY:       4,
+      DEFAULT_PEOPLE: 7,
+      TRIP: {
+        name:     'Upstate NY Trip',
+        subtitle: 'May 8–10, 2026',
+        days: [
+          { date: '2026-05-08', label: 'Friday, May 8'   },
+          { date: '2026-05-09', label: 'Saturday, May 9' },
+          { date: '2026-05-10', label: 'Sunday, May 10'  },
+        ],
+      },
+    };
+  </script>
+
   <script src="js/app.js"></script>
 </body>
 </html>
