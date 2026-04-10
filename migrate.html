@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Migration Tool — Sheets → Firebase</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 760px; margin: 40px auto; padding: 0 20px; background: #f5f7f4; color: #1a2e1e; }
+    h1 { font-size: 1.4rem; margin-bottom: 4px; }
+    p.sub { color: #6b7f70; font-size: .9rem; margin-bottom: 24px; }
+    .card { background: #fff; border: 1px solid #e0e6df; border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+    .card h2 { font-size: 1rem; margin-bottom: 12px; }
+    label { display: block; font-size: .82rem; font-weight: 600; color: #6b7f70; text-transform: uppercase; letter-spacing: .03em; margin-bottom: 4px; }
+    input { width: 100%; padding: 9px 12px; border: 1px solid #e0e6df; border-radius: 8px; font-size: .92rem; box-sizing: border-box; margin-bottom: 12px; }
+    button { padding: 10px 20px; border: none; border-radius: 8px; background: #2d6a4f; color: #fff; font-size: .95rem; font-weight: 600; cursor: pointer; }
+    button:disabled { opacity: .5; cursor: default; }
+    #log { background: #1a2e1e; color: #d8f3dc; font-family: monospace; font-size: .82rem; border-radius: 8px; padding: 14px; min-height: 160px; white-space: pre-wrap; overflow-y: auto; max-height: 400px; }
+    .ok  { color: #52b788; }
+    .err { color: #e76f51; }
+    .warn { color: #e9c46a; }
+  </style>
+</head>
+<body>
+
+<h1>Migration Tool</h1>
+<p class="sub">Imports existing Google Sheets data into Firebase Firestore. Run once after setting up Firebase.</p>
+
+<div class="card">
+  <h2>1. Firebase Config</h2>
+  <label>API Key</label>
+  <input id="apiKey" placeholder="AIza...">
+  <label>Project ID</label>
+  <input id="projectId" placeholder="your-project-id">
+  <label>App ID</label>
+  <input id="appId" placeholder="1:123456789:web:abc...">
+  <p style="font-size:.82rem;color:#6b7f70;margin-top:-8px">Find these in Firebase Console → Project Settings → Your apps.</p>
+</div>
+
+<div class="card">
+  <h2>2. Run Migration</h2>
+  <p style="font-size:.88rem;color:#6b7f70;margin-bottom:12px">
+    Fetches all data from the old Google Apps Script and writes it to Firestore.
+    Safe to run multiple times — existing docs with the same ID are overwritten.
+  </p>
+  <button id="migrateBtn">Start Migration</button>
+</div>
+
+<div class="card">
+  <h2>Log</h2>
+  <div id="log">Ready. Fill in config above and click Start Migration.</div>
+</div>
+
+<!-- Firebase SDK -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="js/config.js"></script>
+<script>
+const OLD_URL = CONFIG.OLD_SCRIPT_URL;
+const logEl   = document.getElementById('log');
+
+function log(msg, cls = '') {
+  const line = document.createElement('div');
+  line.className = cls;
+  line.textContent = msg;
+  logEl.appendChild(line);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+logEl.textContent = '';
+
+function jsonp(url) {
+  return new Promise((resolve, reject) => {
+    const cb     = '_cb_' + Date.now();
+    const script = document.createElement('script');
+    script.src   = url + (url.includes('?') ? '&' : '?') + 'callback=' + cb;
+    window[cb]   = data => { delete window[cb]; script.remove(); data.error ? reject(new Error(data.error)) : resolve(data); };
+    script.onerror = () => { delete window[cb]; script.remove(); reject(new Error('JSONP request failed')); };
+    document.head.appendChild(script);
+  });
+}
+
+document.getElementById('migrateBtn').addEventListener('click', async () => {
+  const apiKey    = document.getElementById('apiKey').value.trim();
+  const projectId = document.getElementById('projectId').value.trim();
+  const appId     = document.getElementById('appId').value.trim();
+
+  if (!apiKey || !projectId || !appId) {
+    log('ERROR: Fill in all Firebase config fields.', 'err'); return;
+  }
+
+  const btn = document.getElementById('migrateBtn');
+  btn.disabled = true;
+  logEl.textContent = '';
+
+  let db;
+  try {
+    // Init Firebase (might already be initialized)
+    if (!firebase.apps.length) {
+      firebase.initializeApp({
+        apiKey, projectId, appId,
+        authDomain:        `${projectId}.firebaseapp.com`,
+        storageBucket:     `${projectId}.appspot.com`,
+        messagingSenderId: '',
+      });
+    }
+    db = firebase.firestore();
+    log('Firebase initialized ✓', 'ok');
+  } catch (e) {
+    log('Firebase init error: ' + e.message, 'err');
+    btn.disabled = false; return;
+  }
+
+  log('Fetching data from Google Sheets via JSONP…');
+  let data;
+  try {
+    data = await jsonp(OLD_URL);
+    log('Fetched data from Sheets ✓', 'ok');
+  } catch (e) {
+    log('Failed to fetch Sheets data: ' + e.message, 'err');
+    log('Make sure the old Google Apps Script is still deployed and accessible.', 'warn');
+    btn.disabled = false; return;
+  }
+
+  const batch_write = async (collection, docs) => {
+    if (!docs.length) { log(`  ${collection}: 0 records — skipped`); return; }
+    // Firestore batches max 500 ops; chunk if needed
+    for (let i = 0; i < docs.length; i += 400) {
+      const chunk = docs.slice(i, i + 400);
+      const batch = db.batch();
+      chunk.forEach(({ id, data }) => batch.set(db.collection(collection).doc(String(id)), data));
+      await batch.commit();
+    }
+    log(`  ${collection}: ${docs.length} records written ✓`, 'ok');
+  };
+
+  try {
+    log('\nMigrating votes…');
+    await batch_write('votes', (data.votes || []).map(v => ({
+      id:   `${v.matchupId}__${v.voter}`,
+      data: { matchupId: v.matchupId, voter: v.voter, winnerId: String(v.winnerId), timestamp: v.timestamp || '' },
+    })));
+
+    log('Migrating poll votes (AirBnb final)…');
+    await batch_write('pollVotes', (data.pollVotes || []).map(v => ({
+      id:   v.voter,
+      data: { voter: v.voter, airbnbId: String(v.airbnbId), timestamp: v.timestamp || '' },
+    })));
+
+    log('Migrating expenses…');
+    await batch_write('expenses', (data.expenses || []).map(e => ({
+      id:   String(e.id),
+      data: {
+        description: e.description || '',
+        amount:      Number(e.amount) || 0,
+        paidBy:      e.paidBy || '',
+        splitAmong:  Array.isArray(e.splitAmong) ? e.splitAmong.join(',') : String(e.splitAmong || ''),
+        date:        e.date || '',
+        addedBy:     e.addedBy || '',
+      },
+    })));
+
+    log('Migrating itinerary…');
+    await batch_write('itinerary', (data.itinerary || []).map(e => ({
+      id:   String(e.id),
+      data: { date: e.date || '', time: e.time || '', title: e.title || '',
+              description: e.description || '', addedBy: e.addedBy || '', timestamp: e.timestamp || '' },
+    })));
+
+    log('Migrating AirBnb listings…');
+    await batch_write('airbnbs', (data.airbnbs || []).map(a => ({
+      id:   String(a.id),
+      data: { name: a.name || '', url: a.url || '', submittedBy: a.submittedBy || '', timestamp: a.timestamp || '' },
+    })));
+
+    log('Migrating polls…');
+    await batch_write('polls', (data.polls || []).map(p => ({
+      id:   String(p.id),
+      data: { question: p.question || '', createdBy: p.createdBy || '', timestamp: p.timestamp || '' },
+    })));
+
+    log('Migrating poll options…');
+    await batch_write('pollOptions', (data.pollOptions || []).map(o => ({
+      id:   String(o.id),
+      data: { pollId: String(o.pollId), title: o.title || '', url: o.url || '',
+              addedBy: o.addedBy || '', timestamp: o.timestamp || '' },
+    })));
+
+    log('Migrating poll votes cast…');
+    await batch_write('pollVotesCast', (data.pollVotesCast || []).map(v => ({
+      id:   `${v.pollId}__${v.optionId}__${v.voter}`,
+      data: { pollId: String(v.pollId), optionId: String(v.optionId), voter: v.voter, timestamp: v.timestamp || '' },
+    })));
+
+    log('Migrating config (bracketStarted)…');
+    const bracketStarted = data.bracketStarted === true || data.bracketStarted === 'true';
+    await db.collection('config').doc('bracketStarted').set({ value: bracketStarted ? 'true' : 'false' });
+    log('  config: bracketStarted = ' + bracketStarted + ' ✓', 'ok');
+
+    log('\n✅ Migration complete! You can now update js/config.js with your Firebase credentials\nand open index.html.', 'ok');
+  } catch (e) {
+    log('Migration error: ' + e.message, 'err');
+  }
+
+  btn.disabled = false;
+});
+</script>
+</body>
+</html>

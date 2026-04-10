@@ -33,6 +33,7 @@
     <button class="tab-btn"        data-tab="bracket">🏠 AirBnb Vote</button>
     <button class="tab-btn"        data-tab="polls">🗳️ Polls</button>
     <button class="tab-btn"        data-tab="expenses">💰 Expenses</button>
+    <button class="tab-btn"        data-tab="budget">📊 Budget</button>
   </nav>
 
   <!-- ─── Main ────────────────────────────────────────────────────────────── -->
@@ -69,6 +70,15 @@
       </div>
       <div id="expensesSummary"></div>
       <div id="expensesList"></div>
+    </section>
+
+    <!-- BUDGET TAB -->
+    <section id="tab-budget" class="tab-pane">
+      <div class="section-header">
+        <h2>Budget Estimates</h2>
+        <p class="section-subtitle">Enter estimated costs for each listing — numbers are shared with the group in real time.</p>
+      </div>
+      <div id="estimates-container"></div>
     </section>
 
   </main>
@@ -210,6 +220,10 @@
 
   <!-- ─── Toast ────────────────────────────────────────────────────────────── -->
   <div class="toast toast-hidden" id="toast"></div>
+
+  <!-- Firebase SDK (compat) -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 
   <script src="js/config.js"></script>
   <script src="js/app.js"></script>
