@@ -150,9 +150,11 @@ async function api(payload) {
         airbnbId:    String(payload.airbnbId),
         airbnbCost:  Number(payload.airbnbCost) || 0,
         food:        Number(payload.food)        || 0,
-        transport:   Number(payload.transport)   || 0,
+        tolls:       Number(payload.tolls)       || 0,
         activities:  Number(payload.activities)  || 0,
+        gas:         Number(payload.gas)         || 0,
         numPeople:   Number(payload.numPeople)   || CONFIG.DEFAULT_PEOPLE,
+        numGasCar:   Number(payload.numGasCar)   || 0,
         lastUpdatedBy: payload.lastUpdatedBy || '',
         timestamp:   new Date().toISOString(),
       });
@@ -865,10 +867,12 @@ function renderEstimates() {
     const est        = state.estimates.find(e => String(e.airbnbId) === String(ab.id)) || {};
     const airbnbCost = Number(est.airbnbCost) || 0;
     const food       = Number(est.food)       || 0;
-    const transport  = Number(est.transport)  || 0;
+    const tolls      = Number(est.tolls)      || 0;
     const activities = Number(est.activities) || 0;
+    const gas        = Number(est.gas)        || 0;
     const numPeople  = Number(est.numPeople)  || CONFIG.DEFAULT_PEOPLE;
-    const total      = airbnbCost + food + transport + activities;
+    const numGasCar  = Number(est.numGasCar)  || 0;
+    const total      = airbnbCost + food + tolls + activities;
     const perPerson  = numPeople > 0 ? total / numPeople : 0;
 
     return `
@@ -892,9 +896,9 @@ function renderEstimates() {
               value="${food || ''}" placeholder="0" min="0" step="1">
           </div>
           <div class="estimate-field">
-            <label class="est-label">Transport ($)</label>
-            <input type="number" class="est-input" data-field="transport"
-              value="${transport || ''}" placeholder="0" min="0" step="1">
+            <label class="est-label">Tolls ($)</label>
+            <input type="number" class="est-input" data-field="tolls"
+              value="${tolls || ''}" placeholder="0" min="0" step="1">
           </div>
           <div class="estimate-field">
             <label class="est-label">Activities ($)</label>
@@ -907,14 +911,30 @@ function renderEstimates() {
               value="${numPeople}" placeholder="${CONFIG.DEFAULT_PEOPLE}" min="1" step="1">
           </div>
         </div>
+        <div class="estimate-fields estimate-fields-gas">
+          <div class="estimate-field">
+            <label class="est-label">Gas ($)</label>
+            <input type="number" class="est-input" data-field="gas"
+              value="${gas || ''}" placeholder="0" min="0" step="1">
+          </div>
+          <div class="estimate-field">
+            <label class="est-label"># in gas car</label>
+            <input type="number" class="est-input" data-field="numGasCar"
+              value="${numGasCar || ''}" placeholder="0" min="0" step="1">
+          </div>
+        </div>
         <div class="estimate-totals">
           <div class="est-total-row">
-            <span class="est-total-label">Total</span>
+            <span class="est-total-label">Total (excl. gas)</span>
             <span class="est-total-val">${fmt$(total)}</span>
           </div>
           <div class="est-per-row">
             <span class="est-per-label">Per Person (÷${numPeople})</span>
             <span class="est-per-val">${fmt$(perPerson)}</span>
+          </div>
+          <div class="est-gas-row${gas > 0 ? '' : ' est-gas-row-empty'}">
+            <span class="est-gas-label">Gas total</span>
+            <span class="est-gas-val">${fmt$(gas)}</span>
           </div>
         </div>
         ${state.currentUser
@@ -936,6 +956,7 @@ function renderEstimates() {
       const airbnbId  = btn.dataset.airbnbId;
       const getVal    = f => Number(card.querySelector(`[data-field="${f}"]`)?.value) || 0;
       const numPeople = Number(card.querySelector('[data-field="numPeople"]')?.value) || CONFIG.DEFAULT_PEOPLE;
+      const numGasCar = Number(card.querySelector('[data-field="numGasCar"]')?.value) || 0;
 
       btn.disabled    = true;
       btn.textContent = 'Saving…';
@@ -944,9 +965,11 @@ function renderEstimates() {
           action: 'saveEstimate', airbnbId,
           airbnbCost: getVal('airbnbCost'),
           food:       getVal('food'),
-          transport:  getVal('transport'),
+          tolls:      getVal('tolls'),
           activities: getVal('activities'),
+          gas:        getVal('gas'),
           numPeople,
+          numGasCar,
           lastUpdatedBy: state.currentUser,
         });
         showToast('Estimates saved!');
@@ -961,13 +984,17 @@ function renderEstimates() {
 }
 
 function updateEstimateTotals(card) {
-  const getVal     = f => Number(card.querySelector(`[data-field="${f}"]`)?.value) || 0;
-  const numPeople  = Number(card.querySelector('[data-field="numPeople"]')?.value) || CONFIG.DEFAULT_PEOPLE;
-  const total      = getVal('airbnbCost') + getVal('food') + getVal('transport') + getVal('activities');
-  const perPerson  = numPeople > 0 ? total / numPeople : 0;
+  const getVal    = f => Number(card.querySelector(`[data-field="${f}"]`)?.value) || 0;
+  const numPeople = Number(card.querySelector('[data-field="numPeople"]')?.value) || CONFIG.DEFAULT_PEOPLE;
+  const total     = getVal('airbnbCost') + getVal('food') + getVal('tolls') + getVal('activities');
+  const perPerson = numPeople > 0 ? total / numPeople : 0;
+  const gas       = getVal('gas');
   card.querySelector('.est-total-val').textContent = fmt$(total);
   card.querySelector('.est-per-val').textContent   = fmt$(perPerson);
-  card.querySelector('.est-per-label').textContent  = `Per Person (÷${numPeople})`;
+  card.querySelector('.est-per-label').textContent = `Per Person (÷${numPeople})`;
+  card.querySelector('.est-gas-val').textContent   = fmt$(gas);
+  const gasRow = card.querySelector('.est-gas-row');
+  gasRow.classList.toggle('est-gas-row-empty', gas === 0);
 }
 
 // ─── Render: All ─────────────────────────────────────────────────────────────
