@@ -261,15 +261,29 @@ function setupListeners() {
 
 function getBracketAirbnbs() {
   const count = state.airbnbs.length;
+  // Need at least 2, and must be even
   if (count < 2) return [];
-  const size = Math.pow(2, Math.floor(Math.log2(count)));
-  return state.airbnbs.slice(0, size);
+  return count % 2 === 0 ? state.airbnbs.slice() : state.airbnbs.slice(0, count - 1);
 }
 
 function nextBracketSize() {
   const count = state.airbnbs.length;
-  for (const s of [4, 8, 16]) { if (s > count) return s; }
+  if (count % 2 !== 0) return count + 1; // just need one more to be even
   return null;
+}
+
+// Given n listings, compute how many get byes (skip round 1).
+// The smallest power of 2 >= n tells us the bracket capacity;
+// listings beyond the lower power of 2 boundary play in round 1,
+// the rest get byes.
+// For any even n: byes = 2*(n - nextPow2below), play = n - byes.
+// Simplified: nearest-lower power of 2 * 2 gives round-1 slots;
+// excess over that capacity are byes.
+function getByes(n) {
+  if (n < 2) return 0;
+  const upperPow2 = Math.pow(2, Math.ceil(Math.log2(n)));
+  const byes      = upperPow2 - n; // how many skip round 1
+  return byes;
 }
 
 function getVotesFor(matchupId) {
@@ -290,32 +304,68 @@ function getMatchupResult(matchupId, aId, bId) {
   return { aVotes, bVotes, winner };
 }
 
+// Build a full knockout bracket supporting any even number of listings.
+// Listings with byes are placed at the top of the draw and skip round 1.
+// Returns array of rounds; each round is array of {matchupId, a, b, bye?}.
+// A bye matchup has bye:true and a winner already set (the bye listing).
 function buildBracket() {
-  const airbnbs     = getBracketAirbnbs();
-  if (airbnbs.length < 2) return [];
-  const totalRounds = Math.log2(airbnbs.length) - 1;
-  const rounds      = [];
+  const airbnbs = getBracketAirbnbs();
+  const n       = airbnbs.length;
+  if (n < 2) return [];
 
+  const byeCount  = getByes(n);
+  const byeSlots  = airbnbs.slice(0, byeCount);          // get byes (top seeds)
+  const playSlots = airbnbs.slice(byeCount);             // play in round 1
+
+  const rounds = [];
+
+  // Round 1 — only listings that didn't get a bye
   const r1 = [];
-  for (let i = 0; i < airbnbs.length; i += 2) {
-    r1.push({ matchupId: `R1M${r1.length + 1}`, a: airbnbs[i], b: airbnbs[i + 1] });
+  for (let i = 0; i < playSlots.length; i += 2) {
+    r1.push({ matchupId: `R1M${r1.length + 1}`, a: playSlots[i], b: playSlots[i + 1] });
   }
-  rounds.push(r1);
+  if (r1.length) rounds.push(r1);
 
-  for (let r = 2; r <= totalRounds; r++) {
-    const prev = rounds[r - 2];
-    const next = [];
-    for (let i = 0; i < prev.length; i += 2) {
-      const mA   = prev[i];
-      const mB   = prev[i + 1];
-      const resA = getMatchupResult(mA.matchupId, mA.a?.id, mA.b?.id);
-      const resB = getMatchupResult(mB.matchupId, mB.a?.id, mB.b?.id);
-      const wA   = resA.winner ? state.airbnbs.find(x => String(x.id) === String(resA.winner)) : null;
-      const wB   = resB.winner ? state.airbnbs.find(x => String(x.id) === String(resB.winner)) : null;
-      next.push({ matchupId: `R${r}M${next.length + 1}`, a: wA, b: wB });
+  // Round 2 — bye listings + winners of round 1 (interleaved so bracket looks balanced)
+  // We pair byes with round-1 winners alternately
+  const resolveWinner = (m) => {
+    if (m.bye) return m.a;
+    const res = getMatchupResult(m.matchupId, m.a?.id, m.b?.id);
+    return res.winner ? state.airbnbs.find(x => String(x.id) === String(res.winner)) : null;
+  };
+
+  let prevRound = r1;
+  let byeIdx    = 0;
+
+  // If there are byes, build round 2 by merging bye listings with r1 winners
+  if (byeCount > 0) {
+    const r2 = [];
+    let matchIdx = 0;
+    // Pair each bye with a r1 matchup winner
+    while (byeIdx < byeSlots.length || matchIdx < prevRound.length) {
+      const aSlot = byeIdx    < byeSlots.length  ? byeSlots[byeIdx++]                   : null;
+      const bSlot = matchIdx  < prevRound.length  ? resolveWinner(prevRound[matchIdx++]) : null;
+      r2.push({ matchupId: `R2M${r2.length + 1}`, a: aSlot, b: bSlot });
+    }
+    rounds.push(r2);
+    prevRound = r2;
+  }
+
+  // Subsequent rounds — standard knockout
+  while (prevRound.length > 1) {
+    const rNum  = rounds.length + 1;
+    const next  = [];
+    for (let i = 0; i < prevRound.length; i += 2) {
+      const mA = prevRound[i];
+      const mB = prevRound[i + 1];
+      const wA = resolveWinner(mA);
+      const wB = mB ? resolveWinner(mB) : null;
+      next.push({ matchupId: `R${rNum}M${next.length + 1}`, a: wA, b: wB });
     }
     rounds.push(next);
+    prevRound = next;
   }
+
   return rounds;
 }
 
@@ -323,16 +373,24 @@ function getFinalists() {
   const rounds = buildBracket();
   if (!rounds.length) return [null, null];
   const last = rounds[rounds.length - 1];
-  return last.map(m => {
-    if (!m.a || !m.b) return null;
-    const res = getMatchupResult(m.matchupId, m.a.id, m.b.id);
-    return res.winner ? state.airbnbs.find(x => String(x.id) === String(res.winner)) : null;
-  });
+  if (last.length !== 1) return [null, null];
+  const final = last[0];
+  if (!final.a || !final.b) return [null, null];
+  const res = getMatchupResult(final.matchupId, final.a.id, final.b.id);
+  const winner = res.winner ? state.airbnbs.find(x => String(x.id) === String(res.winner)) : null;
+  const loser  = winner ? (String(winner.id) === String(final.a.id) ? final.b : final.a) : null;
+  return [final.a, final.b]; // return both finalists regardless of winner
 }
 
 function bracketComplete() {
-  const [fA, fB] = getFinalists();
-  return fA !== null && fB !== null;
+  const rounds = buildBracket();
+  if (!rounds.length) return false;
+  const last = rounds[rounds.length - 1];
+  if (last.length !== 1) return false;
+  const final = last[0];
+  if (!final.a || !final.b) return false;
+  const res = getMatchupResult(final.matchupId, final.a.id, final.b.id);
+  return res.winner !== null;
 }
 
 // ─── Expense logic ────────────────────────────────────────────────────────────
@@ -431,19 +489,20 @@ function renderBracket() {
 // ─── Render: Submission phase ─────────────────────────────────────────────────
 
 function renderSubmissionPhase(view) {
-  const count       = state.airbnbs.length;
-  const bracketSize = count >= 2 ? Math.pow(2, Math.floor(Math.log2(count))) : 0;
-  const next        = nextBracketSize();
-  const canStart    = bracketSize >= 2;
+  const count     = state.airbnbs.length;
+  const canStart  = count >= 2 && count % 2 === 0;
+  const needsOne  = count >= 2 && count % 2 !== 0;
+  const byeCount  = canStart ? getByes(count) : 0;
 
-  const hintParts = [];
-  if (canStart) hintParts.push(`Ready for a <strong>${bracketSize}-listing bracket</strong>`);
-  if (next)     hintParts.push(`add ${next - count} more for ${next}`);
-  const hint = hintParts.join(' · ');
+  const hint = needsOne
+    ? `Add 1 more to make an even number and start the bracket`
+    : canStart
+      ? `Ready for a <strong>${count}-listing bracket</strong>${byeCount > 0 ? ` · ${byeCount} listing${byeCount > 1 ? 's' : ''} get a bye` : ''}`
+      : '';
 
   const listingsHtml = state.airbnbs.length
     ? state.airbnbs.map((ab, i) => `
-        <div class="submission-item ${i >= bracketSize ? 'submission-overflow' : ''}">
+        <div class="submission-item">
           <div class="submission-num">${i + 1}</div>
           <div class="submission-body">
             <div class="submission-name">${ab.name || 'Listing #' + (i + 1)}</div>
@@ -451,7 +510,6 @@ function renderSubmissionPhase(view) {
             <div class="submission-meta">Added by ${ab.submittedBy || 'unknown'}</div>
           </div>
           ${state.currentUser ? `<button class="btn-icon delete-airbnb" data-id="${ab.id}" title="Remove">✕</button>` : ''}
-          ${i >= bracketSize && bracketSize > 0 ? `<span class="overflow-tag">won't be seeded</span>` : ''}
         </div>`).join('')
     : `<p class="empty-note">No listings yet — be the first to submit one!</p>`;
 
@@ -472,11 +530,8 @@ function renderSubmissionPhase(view) {
       ${canStart && state.currentUser ? `
         <div class="start-bracket-wrap">
           <button class="btn btn-start" id="startBracketBtn">
-            🏆 Lock &amp; Start ${bracketSize}-Listing Bracket
+            🏆 Lock &amp; Start ${count}-Listing Bracket
           </button>
-          ${count > bracketSize
-            ? `<p class="start-note">The first ${bracketSize} submissions will be seeded (the rest are excluded).</p>`
-            : ''}
         </div>` : ''}
     </div>`;
 
@@ -606,17 +661,23 @@ function renderPoll(view) {
   const pollWinner = totalPoll === CONFIG.TOTAL_VOTERS
     ? (aVotes >= bVotes ? fA : fB) : null;
 
+  const votersFor = (ab) => state.pollVotes
+    .filter(v => String(v.airbnbId) === String(ab?.id))
+    .map(v => v.voter);
+
   const pollSlot = (ab, votes) => {
     if (!ab) return '';
     const pct     = totalPoll > 0 ? Math.round((votes / totalPoll) * 100) : 0;
     const voted   = userPoll && String(userPoll.airbnbId) === String(ab.id);
     const canVote = state.currentUser && !pollWinner;
+    const voters  = votersFor(ab);
     return `
       <div class="poll-option ${pollWinner?.id === ab.id ? 'poll-winner' : ''}">
         <div class="poll-listing-name">${ab.name || 'Listing #' + ab.id}</div>
         ${ab.url ? `<a href="${ab.url}" target="_blank" class="ab-link">View listing ↗</a>` : ''}
         <div class="poll-bar-wrap"><div class="poll-bar" style="width:${pct}%"></div></div>
         <div class="poll-votes">${votes} / ${CONFIG.TOTAL_VOTERS} votes (${pct}%)</div>
+        ${voters.length ? `<div class="poll-voter-list">${voters.map(v => `<span class="poll-voter-chip">${v}</span>`).join('')}</div>` : ''}
         ${canVote ? `<button class="btn btn-primary poll-vote-btn ${voted ? 'voted' : ''}"
           data-id="${ab.id}">${voted ? '✓ Your pick' : 'Choose this one'}</button>` : ''}
       </div>`;
@@ -1004,6 +1065,85 @@ function updateEstimateTotals(card) {
   gasRow.classList.toggle('est-gas-row-empty', gas === 0);
 }
 
+// ─── Render: Compare ─────────────────────────────────────────────────────────
+
+function renderCompare() {
+  const container = document.getElementById('compare-container');
+  if (!container) return;
+
+  const [fA, fB] = getFinalists();
+
+  if (!bracketComplete() || !fA || !fB) {
+    container.innerHTML = '<p class="empty-note">The two finalists will appear here once the bracket is complete.</p>';
+    return;
+  }
+
+  const est = (ab) => state.estimates.find(e => String(e.airbnbId) === String(ab.id)) || {};
+
+  const rows = [
+    { label: 'AirBnb Cost',      field: 'airbnbCost', fmt: fmt$ },
+    { label: 'Food',             field: 'food',        fmt: fmt$ },
+    { label: 'Tolls',            field: 'tolls',       fmt: fmt$ },
+    { label: 'Activities',       field: 'activities',  fmt: fmt$ },
+    { label: 'Total (excl. gas)',field: '_total',       fmt: fmt$ },
+    { label: 'Per Person',       field: '_perPerson',  fmt: fmt$ },
+    { label: 'Gas',              field: 'gas',         fmt: fmt$ },
+    { label: '# in Gas Car',     field: 'numGasCar',   fmt: n => n > 0 ? n : '—' },
+    { label: '# People',         field: 'numPeople',   fmt: n => n || CONFIG.DEFAULT_PEOPLE },
+  ];
+
+  const getVal = (ab, field) => {
+    const e = est(ab);
+    if (field === '_total')     return (Number(e.airbnbCost)||0) + (Number(e.food)||0) + (Number(e.tolls)||0) + (Number(e.activities)||0);
+    if (field === '_perPerson') {
+      const total = (Number(e.airbnbCost)||0) + (Number(e.food)||0) + (Number(e.tolls)||0) + (Number(e.activities)||0);
+      const n     = Number(e.numPeople) || CONFIG.DEFAULT_PEOPLE;
+      return n > 0 ? total / n : 0;
+    }
+    return Number(e[field]) || 0;
+  };
+
+  const rowsHtml = rows.map(({ label, field, fmt }) => {
+    const vA   = getVal(fA, field);
+    const vB   = getVal(fB, field);
+    const lower = (field === '_total' || field === '_perPerson' || field === 'airbnbCost' || field === 'food' || field === 'tolls' || field === 'activities' || field === 'gas');
+    const aWins = lower && vA > 0 && vB > 0 && vA < vB;
+    const bWins = lower && vA > 0 && vB > 0 && vB < vA;
+    return `
+      <tr>
+        <td class="cmp-label">${label}</td>
+        <td class="cmp-val ${aWins ? 'cmp-better' : ''}">${fmt(vA)}</td>
+        <td class="cmp-val ${bWins ? 'cmp-better' : ''}">${fmt(vB)}</td>
+      </tr>`;
+  }).join('');
+
+  const pollWinnerVotes = Math.max(
+    state.pollVotes.filter(v => String(v.airbnbId) === String(fA.id)).length,
+    state.pollVotes.filter(v => String(v.airbnbId) === String(fB.id)).length
+  );
+
+  container.innerHTML = `
+    <div class="cmp-table-wrap">
+      <table class="cmp-table">
+        <thead>
+          <tr>
+            <th class="cmp-label-head"></th>
+            <th class="cmp-head">
+              <div class="cmp-name">${fA.name || 'Finalist A'}</div>
+              ${fA.url ? `<a href="${fA.url}" target="_blank" class="cmp-link">View listing ↗</a>` : ''}
+            </th>
+            <th class="cmp-head">
+              <div class="cmp-name">${fB.name || 'Finalist B'}</div>
+              ${fB.url ? `<a href="${fB.url}" target="_blank" class="cmp-link">View listing ↗</a>` : ''}
+            </th>
+          </tr>
+        </thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+    </div>
+    <p class="cmp-note">Green = lower cost. Fill in estimates in the Budget tab to see numbers here.</p>`;
+}
+
 // ─── Render: All ─────────────────────────────────────────────────────────────
 
 function renderAll() {
@@ -1012,6 +1152,7 @@ function renderAll() {
   renderPolls();
   renderExpenses();
   renderEstimates();
+  renderCompare();
 }
 
 // ─── Toast ────────────────────────────────────────────────────────────────────
