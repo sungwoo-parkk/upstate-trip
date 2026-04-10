@@ -1,86 +1,51 @@
-A group trip website with:
-- **Trip itinerary** (editable by the group)
-- **AirBnb bracket vote** (16 options → knockout rounds → final poll)
-- **Expense tracker** with automatic settlement calculations
+# Upstate NY Trip · May 8–10, 2026
 
----
+A group trip planning website for 7 people. Live at [sungwoo-parkk.github.io/upstate-trip](https://sungwoo-parkk.github.io/upstate-trip/).
 
-## Setup (one-time, ~10 minutes)
+## Features
 
-### 1. Create the Google Sheet
+- **Trip itinerary** — add events with day, time, and notes; editable by the whole group
+- **AirBnb bracket vote** — submit listings, run a knockout bracket (supports any even number of listings), vote in real time
+- **Polls** — create questions with custom options; group votes in real time
+- **Expense tracker** — log expenses with flexible splits; automatic settlement calculations
+- **Budget estimates** — enter estimated costs (AirBnb, food, tolls, activities, gas) per listing; shared in real time
+- **Compare finalists** — side-by-side budget breakdown of the two bracket finalists
+- **Grocery list** — embedded Google Sheet for collaborative grocery planning
 
-1. Go to [sheets.google.com](https://sheets.google.com) and create a new blank spreadsheet.
-2. Name it something like **"Upstate Trip Data"**.
+## Tech stack
 
-### 2. Deploy the Apps Script backend
+- Static HTML/CSS/JS — no build step
+- **Firebase Firestore** for real-time data sync across all users
+- Hosted on **GitHub Pages**
 
-1. Inside the spreadsheet, open **Extensions → Apps Script**.
-2. Delete the default `myFunction()` code.
-3. Copy the entire contents of `Code.gs` (in this repo) and paste it.
-4. Click **Save** (💾).
-5. In the function dropdown (top toolbar), select **`initSheets`** and click **▶ Run**. Accept permissions when prompted. This creates the four data sheets.
-6. Click **Deploy → New deployment**.
-   - Type: **Web app**
-   - Execute as: **Me**
-   - Who has access: **Anyone**
-7. Click **Deploy**, then copy the **Web app URL** (looks like `https://script.google.com/macros/s/ABC.../exec`).
+## Firebase config
 
-### 3. Add the URL to the site
-
-Open `js/config.js` and paste the URL:
-
-```js
-const SCRIPT_URL = 'https://script.google.com/macros/s/YOUR_ID_HERE/exec';
-```
-
-### 4. (Optional) Fill in AirBnb listings
-
-Still in `js/config.js`, update the `AIRBNBS` array with real listing details:
-
-```js
-{ id: 1, name: 'Cozy Cabin in Woodstock', url: 'https://airbnb.com/...', description: '4BR, hot tub', image: '' },
-```
-
-### 5. Publish to GitHub Pages
-
-```bash
-git init
-git add .
-git commit -m "Upstate NY trip site"
-# Create a new repo on github.com, then:
-git remote add origin https://github.com/YOUR_USERNAME/upstate-trip.git
-git push -u origin main
-```
-
-Then in the GitHub repo → **Settings → Pages → Source: Deploy from branch → main → / (root)** → Save.
-
-Your site will be live at `https://YOUR_USERNAME.github.io/upstate-trip/`.
-
----
-
-## How the bracket works
-
-- **16 AirBnb options** seeded into 8 first-round matchups
-- **First to 4 votes** (majority of 7) wins a matchup — or whoever leads after all 7 vote
-- **3 knockout rounds** → 2 finalists → **final poll**
-- Each person picks their name from the dropdown before voting — votes are saved to Google Sheets and shared in real time
-
-## Expenses
-
-- Anyone can log an expense (description, amount, who paid, who splits)
-- The **Balances** section shows each person's net position
-- The **Settlements** section shows the minimum transactions to settle up
-
----
+The Firebase project config is inlined in `index.html`. Firebase web API keys are designed to be public — security is enforced via Firestore security rules, not key secrecy. See [Firebase docs](https://firebase.google.com/docs/projects/api-keys) for details.
 
 ## File structure
 
 ```
 upstate-trip/
-├── index.html          Main site
-├── css/style.css       Styles
+├── index.html           Main site (Firebase config inlined here)
+├── css/style.css        Styles
 ├── js/
-│   ├── config.js       ← Edit this: SCRIPT_URL + AirBnb listings
-│   └── app.js          App logic
-└── Code.gs             Google Apps Script (paste into your Sheet)
+│   ├── app.js           All app logic
+│   └── config.example.js  Template showing config shape (placeholder values)
+├── migrate.html         One-time migration tool (Sheets → Firebase, already run)
+├── Code.gs              Old Google Apps Script backend (no longer used)
+└── FIREBASE_SETUP.md    Firebase project setup instructions
 ```
+
+## How the bracket works
+
+- Group members submit AirBnb listings via the AirBnb Vote tab
+- Once all listings are in, an admin locks the bracket (supports any even number of listings — odd counts drop the last entry; non-power-of-2 counts use byes for top seeds)
+- **First to 4 votes** (majority of 7) wins a matchup, or whoever leads after all 7 vote
+- Knockout rounds continue until 2 finalists remain → **final poll**
+- The Compare tab shows a side-by-side budget breakdown of the two finalists
+
+## Expenses
+
+- Anyone can log an expense (description, amount, who paid, who splits)
+- **Balances** shows each person's net position
+- **Settlements** shows the minimum transactions needed to settle up
