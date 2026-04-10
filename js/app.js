@@ -368,6 +368,13 @@ function calcSettlements() {
 
 function fmt$(n) { return '$' + Number(n).toFixed(2); }
 
+function fmt12h(time) {
+  if (!time) return '—';
+  const [h, m] = time.split(':').map(Number);
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${ampm}`;
+}
+
 // ─── Render: Itinerary ────────────────────────────────────────────────────────
 
 function renderTrip() {
@@ -379,7 +386,7 @@ function renderTrip() {
     const itemsHtml = items.length
       ? items.map(item => `
           <div class="itinerary-item">
-            <div class="itinerary-time">${item.time || '—'}</div>
+            <div class="itinerary-time">${fmt12h(item.time)}</div>
             <div class="itinerary-body">
               <div class="itinerary-title">${item.title}</div>
               ${item.description ? `<div class="itinerary-desc">${item.description}</div>` : ''}
