@@ -261,29 +261,23 @@ function setupListeners() {
 
 function getBracketAirbnbs() {
   const count = state.airbnbs.length;
-  // Need at least 2, and must be even
   if (count < 2) return [];
+  // Drop one listing if odd so we always have an even number
   return count % 2 === 0 ? state.airbnbs.slice() : state.airbnbs.slice(0, count - 1);
 }
 
 function nextBracketSize() {
   const count = state.airbnbs.length;
-  if (count % 2 !== 0) return count + 1; // just need one more to be even
+  if (count % 2 !== 0) return count + 1;
   return null;
 }
 
-// Given n listings, compute how many get byes (skip round 1).
-// The smallest power of 2 >= n tells us the bracket capacity;
-// listings beyond the lower power of 2 boundary play in round 1,
-// the rest get byes.
-// For any even n: byes = 2*(n - nextPow2below), play = n - byes.
-// Simplified: nearest-lower power of 2 * 2 gives round-1 slots;
-// excess over that capacity are byes.
+// Number of byes needed so the bracket reduces to 2 finalists cleanly.
+// e.g. n=6 → next power of 2 is 8, so 2 byes; n=30 → 32, so 2 byes.
 function getByes(n) {
   if (n < 2) return 0;
-  const upperPow2 = Math.pow(2, Math.ceil(Math.log2(n)));
-  const byes      = upperPow2 - n; // how many skip round 1
-  return byes;
+  const upper = Math.pow(2, Math.ceil(Math.log2(n)));
+  return upper - n;
 }
 
 function getVotesFor(matchupId) {
@@ -304,63 +298,54 @@ function getMatchupResult(matchupId, aId, bId) {
   return { aVotes, bVotes, winner };
 }
 
-// Build a full knockout bracket supporting any even number of listings.
-// Listings with byes are placed at the top of the draw and skip round 1.
-// Returns array of rounds; each round is array of {matchupId, a, b, bye?}.
-// A bye matchup has bye:true and a winner already set (the bye listing).
 function buildBracket() {
   const airbnbs = getBracketAirbnbs();
   const n       = airbnbs.length;
   if (n < 2) return [];
 
-  const byeCount  = getByes(n);
-  const byeSlots  = airbnbs.slice(0, byeCount);          // get byes (top seeds)
-  const playSlots = airbnbs.slice(byeCount);             // play in round 1
+  const byeCount    = getByes(n);
+  const byeListings = airbnbs.slice(0, byeCount);
+  const playListings = airbnbs.slice(byeCount);
 
-  const rounds = [];
-
-  // Round 1 — only listings that didn't get a bye
-  const r1 = [];
-  for (let i = 0; i < playSlots.length; i += 2) {
-    r1.push({ matchupId: `R1M${r1.length + 1}`, a: playSlots[i], b: playSlots[i + 1] });
-  }
-  if (r1.length) rounds.push(r1);
-
-  // Round 2 — bye listings + winners of round 1 (interleaved so bracket looks balanced)
-  // We pair byes with round-1 winners alternately
   const resolveWinner = (m) => {
-    if (m.bye) return m.a;
-    const res = getMatchupResult(m.matchupId, m.a?.id, m.b?.id);
+    if (!m || !m.a || !m.b) return null;
+    const res = getMatchupResult(m.matchupId, m.a.id, m.b.id);
     return res.winner ? state.airbnbs.find(x => String(x.id) === String(res.winner)) : null;
   };
 
-  let prevRound = r1;
-  let byeIdx    = 0;
+  const rounds = [];
 
-  // If there are byes, build round 2 by merging bye listings with r1 winners
-  if (byeCount > 0) {
-    const r2 = [];
-    let matchIdx = 0;
-    // Pair each bye with a r1 matchup winner
-    while (byeIdx < byeSlots.length || matchIdx < prevRound.length) {
-      const aSlot = byeIdx    < byeSlots.length  ? byeSlots[byeIdx++]                   : null;
-      const bSlot = matchIdx  < prevRound.length  ? resolveWinner(prevRound[matchIdx++]) : null;
-      r2.push({ matchupId: `R2M${r2.length + 1}`, a: aSlot, b: bSlot });
+  // Round 1: non-bye listings play each other
+  if (playListings.length >= 2) {
+    const r1 = [];
+    for (let i = 0; i < playListings.length; i += 2) {
+      r1.push({ matchupId: `R1M${r1.length + 1}`, a: playListings[i], b: playListings[i + 1] });
     }
-    rounds.push(r2);
-    prevRound = r2;
+    rounds.push(r1);
   }
 
-  // Subsequent rounds — standard knockout
-  while (prevRound.length > 1) {
-    const rNum  = rounds.length + 1;
-    const next  = [];
-    for (let i = 0; i < prevRound.length; i += 2) {
-      const mA = prevRound[i];
-      const mB = prevRound[i + 1];
-      const wA = resolveWinner(mA);
-      const wB = mB ? resolveWinner(mB) : null;
-      next.push({ matchupId: `R${rNum}M${next.length + 1}`, a: wA, b: wB });
+  // Round 2 (only when there are byes): all byes + all r1 winners participate together
+  if (byeCount > 0) {
+    const r1Winners   = (rounds[0] || []).map(m => resolveWinner(m));
+    const participants = [...byeListings, ...r1Winners]; // simple concat — seeding doesn't matter here
+    const r2 = [];
+    for (let i = 0; i + 1 < participants.length; i += 2) {
+      r2.push({ matchupId: `R2M${r2.length + 1}`, a: participants[i], b: participants[i + 1] });
+    }
+    rounds.push(r2);
+  }
+
+  // Subsequent knockout rounds — stop when 2 matchups remain (those winners → Final Poll)
+  let prevRound = rounds[rounds.length - 1];
+  while (prevRound && prevRound.length > 2) {
+    const rNum = rounds.length + 1;
+    const next = [];
+    for (let i = 0; i + 1 < prevRound.length; i += 2) {
+      next.push({
+        matchupId: `R${rNum}M${next.length + 1}`,
+        a: resolveWinner(prevRound[i]),
+        b: resolveWinner(prevRound[i + 1]),
+      });
     }
     rounds.push(next);
     prevRound = next;
@@ -373,24 +358,22 @@ function getFinalists() {
   const rounds = buildBracket();
   if (!rounds.length) return [null, null];
   const last = rounds[rounds.length - 1];
-  if (last.length !== 1) return [null, null];
-  const final = last[0];
-  if (!final.a || !final.b) return [null, null];
-  const res = getMatchupResult(final.matchupId, final.a.id, final.b.id);
-  const winner = res.winner ? state.airbnbs.find(x => String(x.id) === String(res.winner)) : null;
-  const loser  = winner ? (String(winner.id) === String(final.a.id) ? final.b : final.a) : null;
-  return [final.a, final.b]; // return both finalists regardless of winner
+
+  // n=2: single matchup IS the final — both participants are the finalists
+  if (last.length === 1) return [last[0].a || null, last[0].b || null];
+
+  // Normal: last round has 2 semifinal matchups; their winners are the finalists
+  if (last.length !== 2) return [null, null];
+  return last.map(m => {
+    if (!m.a || !m.b) return null;
+    const res = getMatchupResult(m.matchupId, m.a.id, m.b.id);
+    return res.winner ? state.airbnbs.find(x => String(x.id) === String(res.winner)) : null;
+  });
 }
 
 function bracketComplete() {
-  const rounds = buildBracket();
-  if (!rounds.length) return false;
-  const last = rounds[rounds.length - 1];
-  if (last.length !== 1) return false;
-  const final = last[0];
-  if (!final.a || !final.b) return false;
-  const res = getMatchupResult(final.matchupId, final.a.id, final.b.id);
-  return res.winner !== null;
+  const [fA, fB] = getFinalists();
+  return fA !== null && fB !== null;
 }
 
 // ─── Expense logic ────────────────────────────────────────────────────────────
