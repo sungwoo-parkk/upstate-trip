@@ -34,6 +34,7 @@
     <button class="tab-btn"        data-tab="polls">🗳️ Polls</button>
     <button class="tab-btn"        data-tab="expenses">💰 Expenses</button>
     <button class="tab-btn"        data-tab="budget">📊 Budget</button>
+    <button class="tab-btn"        data-tab="groceries">🛒 Groceries</button>
   </nav>
 
   <!-- ─── Main ────────────────────────────────────────────────────────────── -->
@@ -79,6 +80,43 @@
         <p class="section-subtitle">Enter estimated costs for each listing — numbers are shared with the group in real time.</p>
       </div>
       <div id="estimates-container"></div>
+    </section>
+
+    <!-- GROCERIES TAB -->
+    <!--
+      HOW TO SET UP THE GROCERY SHEET EMBED
+      ──────────────────────────────────────
+      1. Open your Google Sheet
+      2. Click File → Share → Publish to web
+      3. Under "Link", select the sheet tab you want (or "Entire document")
+      4. Change the format dropdown from "Web page" to "Embed"  (optional — either works for the URL)
+         OR: stay on "Web page" and copy the link — we'll convert it below
+      5. Click "Publish" and copy the URL
+      6. Paste it as the value of GROCERY_SHEET_URL in the <script> block below
+         AND as the href of the "Open to edit" anchor tag (use the normal sheet URL, not the /pub URL)
+
+      EASIER ALTERNATIVE FOR THE EDIT LINK
+      ──────────────────────────────────────
+      The embed uses the /pub URL (view-only).
+      For the "Open to edit" button, use the normal sharing URL:
+        https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/edit
+    -->
+    <section id="tab-groceries" class="tab-pane">
+      <div class="section-header">
+        <h2>Grocery List</h2>
+        <a id="groceryEditLink"
+           href="https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/edit"
+           target="_blank"
+           class="btn btn-primary">Open to edit ↗</a>
+      </div>
+      <div class="grocery-embed-wrap">
+        <iframe
+          id="groceryFrame"
+          src="https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/pubhtml?widget=true&amp;headers=false"
+          class="grocery-frame"
+          frameborder="0">
+        </iframe>
+      </div>
     </section>
 
   </main>
