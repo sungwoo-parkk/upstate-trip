@@ -533,7 +533,7 @@ function renderSubmissionPhase(view) {
   const startBtn = view.querySelector('#startBracketBtn');
   if (startBtn) {
     startBtn.addEventListener('click', async () => {
-      if (!confirm(`Lock submissions and start the ${bracketSize}-listing bracket? This can't be undone.`)) return;
+      if (!confirm(`Lock submissions and start the ${count}-listing bracket? This can't be undone.`)) return;
       startBtn.disabled = true;
       try {
         await api({ action: 'startBracket' });
